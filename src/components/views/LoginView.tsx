@@ -124,7 +124,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <User className="w-7 h-7" />
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">
-            Login Direto App
+            AppChurch
           </h1>
           <p className="text-xs font-semibold text-slate-500 mt-1">
             ADM Tesouraria • Paz Church Sobral
