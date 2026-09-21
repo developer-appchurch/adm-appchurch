@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { SharePointService } from '../../services/sharepointService';
 import { SharePointConfig, MembroItem } from '../../types';
@@ -18,8 +18,54 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [erroLogin, setErroLogin] = useState<string | null>(null);
   const [sucessoLogin, setSucessoLogin] = useState<string | null>(null);
+  const [conexaoStatus, setConexaoStatus] = useState<'conectado' | 'erro' | 'verificando'>('verificando');
+  const [statusDetalhe, setStatusDetalhe] = useState<string>('Verificando conexão com o SharePoint...');
 
   const spService = SharePointService.getInstance();
+
+  // Verifica o status de conexão da API com o SharePoint ao carregar a tela
+  useEffect(() => {
+    let montado = true;
+
+    const verificarConexao = async () => {
+      try {
+        const resp = await fetch('/api/sharepoint/status');
+        if (!resp.ok) {
+          if (montado) {
+            setConexaoStatus('erro');
+            setStatusDetalhe('Falha ao comunicar com o servidor');
+          }
+          return;
+        }
+        const data = await resp.json();
+        if (montado) {
+          if (data.status === 'CONECTADO') {
+            setConexaoStatus('conectado');
+            setStatusDetalhe(
+              `Conectado ao SharePoint (${data.totalRelatorios ?? 0} relatórios • ${data.totalMembros ?? 0} membros)`
+            );
+          } else {
+            setConexaoStatus('erro');
+            setStatusDetalhe(data.erro || 'Não foi possível sincronizar com o SharePoint');
+          }
+        }
+      } catch (err) {
+        if (montado) {
+          setConexaoStatus('erro');
+          setStatusDetalhe('Erro de rede ao conectar com o SharePoint');
+        }
+      }
+    };
+
+    verificarConexao();
+
+    // Revalida a cada 30 segundos
+    const intervalo = setInterval(verificarConexao, 30000);
+    return () => {
+      montado = false;
+      clearInterval(intervalo);
+    };
+  }, []);
 
   const handleAppSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -176,6 +222,31 @@ export const LoginView: React.FC<LoginViewProps> = ({
             )}
           </button>
         </form>
+      </div>
+
+      {/* Sinalizador Circular no canto inferior direito */}
+      <div 
+        id="sharepoint-status-indicator"
+        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 select-none"
+        title={statusDetalhe}
+      >
+        <span className="relative flex h-3.5 w-3.5">
+          {conexaoStatus === 'conectado' && (
+            <>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 shadow-md shadow-emerald-500/50 border border-white/20"></span>
+            </>
+          )}
+          {conexaoStatus === 'erro' && (
+            <>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-60"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500 shadow-md shadow-rose-500/50 border border-white/20"></span>
+            </>
+          )}
+          {conexaoStatus === 'verificando' && (
+            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-400 animate-pulse border border-white/20"></span>
+          )}
+        </span>
       </div>
     </div>
   );
