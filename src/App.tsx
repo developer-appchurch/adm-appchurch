@@ -7,8 +7,6 @@ import { FluxoCaixaView } from './components/views/FluxoCaixaView';
 import { DashboardView } from './components/views/DashboardView';
 import { RelacaoEnvelopesView } from './components/views/RelacaoEnvelopesView';
 import { ValidarRelatoriosView } from './components/views/ValidarRelatoriosView';
-import { SupervisaoView } from './components/views/SupervisaoView';
-import { CadastrosView } from './components/views/CadastrosView';
 import { MenuAdminView } from './components/views/MenuAdminView';
 import { LoginView } from './components/views/LoginView';
 
@@ -243,18 +241,6 @@ export default function App() {
               onAtualizarLancamento={handleAtualizarLancamento}
               onConfirmarLancamento={handleConfirmarLancamento}
               onDesconfirmarLancamento={handleDesconfirmarLancamento}
-              onRefresh={handleRefresh}
-            />
-          )}
-
-          {currentView === 'supervisao' && (
-            <SupervisaoView lancamentos={lancamentos} />
-          )}
-
-          {currentView === 'cadastros' && (
-            <CadastrosView
-              configSharepoint={sharePointConfig}
-              onConfigSharepointChanged={handleSharePointConfigSaved}
               onRefresh={handleRefresh}
             />
           )}

@@ -3,8 +3,6 @@ export type ViewMode =
   | 'dashboard'
   | 'relacao-envelopes'
   | 'validar-relatorios'
-  | 'supervisao'
-  | 'cadastros'
   | 'menu-admin'
   | 'login';
 

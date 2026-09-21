@@ -4,8 +4,6 @@ import {
   FileSpreadsheet, 
   LayoutDashboard, 
   TrendingUp, 
-  Users, 
-  UserPlus, 
   User,
   Grid, 
   LogOut,
@@ -53,16 +51,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Fluxo de Caixa',
       icon: TrendingUp,
       badge: 'Novo'
-    },
-    {
-      id: 'supervisao' as ViewMode,
-      label: 'Supervisão',
-      icon: Users
-    },
-    {
-      id: 'cadastros' as ViewMode,
-      label: 'Cadastros',
-      icon: UserPlus
     }
   ];
 
