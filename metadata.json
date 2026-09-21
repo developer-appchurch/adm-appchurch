@@ -1,0 +1,6 @@
+{
+  "name": "ADM Tesouraria AppChurch",
+  "description": "Sistema de gerenciamento da tesouraria com relatórios dinâmicos de fluxo de caixa, leitura total de dados do SharePoint, gráficos interativos e exportação em PDF e Excel por período, setor, área, mensal e anual.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
