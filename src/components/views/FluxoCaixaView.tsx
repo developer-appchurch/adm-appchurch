@@ -384,54 +384,6 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
 
   return (
     <div id="fluxo-caixa-container" className="p-3.5 sm:p-6 space-y-4 sm:space-y-6 max-w-[1600px] mx-auto">
-      {/* Barra de Ações Rápidas & Exportações */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#23273c] p-3.5 sm:p-4 rounded-xl border border-[#313752]">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0">
-            <TrendingUp className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-              Fluxo de Caixa & Relatório Dinâmico
-            </h2>
-            <p className="text-[11px] sm:text-xs text-slate-400">
-              Leitura em tempo real do banco de dados SharePoint • {listaLancamentos.length} registros
-            </p>
-          </div>
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex items-center flex-wrap gap-2 w-full sm:w-auto">
-          <button
-            id="btn-export-excel-main"
-            onClick={handleExportExcel}
-            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition-all duration-150 cursor-pointer"
-          >
-            <FileSpreadsheet className="w-4 h-4 shrink-0" />
-            <span>Exportar Excel</span>
-          </button>
-
-          <button
-            id="btn-export-pdf-main"
-            onClick={handleExportPDF}
-            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold shadow transition-all duration-150 cursor-pointer"
-          >
-            <FileText className="w-4 h-4 shrink-0" />
-            <span>Exportar PDF</span>
-          </button>
-
-          <button
-            id="btn-print-view"
-            onClick={() => window.print()}
-            className="p-2 rounded-lg bg-[#2c324b] hover:bg-[#373e5e] text-slate-300 hover:text-white border border-[#3e4768] transition-colors cursor-pointer"
-            title="Imprimir Relatório"
-            aria-label="Imprimir"
-          >
-            <Printer className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
       {/* KPI Cards do Fluxo de Caixa */}
       <div id="fluxo-caixa-kpis" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Entradas Validadas */}
