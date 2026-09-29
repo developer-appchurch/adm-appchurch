@@ -9,6 +9,7 @@ import { RelacaoEnvelopesView } from './components/views/RelacaoEnvelopesView';
 import { ValidarRelatoriosView } from './components/views/ValidarRelatoriosView';
 import { MenuAdminView } from './components/views/MenuAdminView';
 import { LoginView } from './components/views/LoginView';
+import { DiagnosticsView } from './components/views/DiagnosticsView';
 
 export default function App() {
   const spService = SharePointService.getInstance();
@@ -165,6 +166,7 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
         configSharePoint={sharePointConfig}
         onConfigChanged={handleSharePointConfigSaved}
+        onSelectView={setCurrentView}
       />
     );
   }
@@ -274,6 +276,10 @@ export default function App() {
               onDesconfirmarLancamento={handleDesconfirmarLancamento}
               onRefresh={handleRefresh}
             />
+          )}
+
+          {currentView === 'diagnostico' && (
+            <DiagnosticsView />
           )}
         </main>
       </div>

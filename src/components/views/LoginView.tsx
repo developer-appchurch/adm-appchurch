@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { User, RefreshCw, CheckCircle2, AlertCircle, Database, ShieldCheck, Settings } from 'lucide-react';
+import { User, RefreshCw, CheckCircle2, AlertCircle, Database, ShieldCheck, Settings, Activity } from 'lucide-react';
 import { SharePointService } from '../../services/sharepointService';
-import { SharePointConfig, MembroItem } from '../../types';
+import { SharePointConfig, MembroItem, ViewMode } from '../../types';
 import { SharePointLoginModal } from './SharePointLoginModal';
 
 interface LoginViewProps {
   onLoginSuccess: (membro: MembroItem) => void;
   configSharePoint?: SharePointConfig;
   onConfigChanged?: (newCfg: SharePointConfig) => void;
+  onSelectView?: (view: ViewMode) => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ 
   onLoginSuccess,
-  onConfigChanged 
+  onConfigChanged,
+  onSelectView
 }) => {
   const [login, setLogin] = useState('');
   const [senha, setSenha] = useState('');
@@ -130,6 +132,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         isOpen={isModalSharePointOpen}
         onClose={() => setIsModalSharePointOpen(false)}
         onConectadoComSucesso={handleSharePointConectadoSucesso}
+        onAbrirDiagnostico={onSelectView ? () => onSelectView('diagnostico') : undefined}
       />
 
       <div 
@@ -242,15 +245,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
         </form>
 
         {/* Botão para abrir a tela de conexão com o SharePoint */}
-        <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center">
+        <div className="mt-5 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-center gap-2">
           <button
             type="button"
             onClick={() => setIsModalSharePointOpen(true)}
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 text-xs font-semibold transition-all cursor-pointer border border-slate-200"
           >
             <Database className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Autenticação / Conexão SharePoint</span>
+            <span>Conexão SharePoint</span>
           </button>
+
+          {onSelectView && (
+            <button
+              type="button"
+              onClick={() => onSelectView('diagnostico')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 text-xs font-semibold transition-all cursor-pointer border border-slate-200"
+              title="Abrir tela de diagnóstico de endpoints"
+            >
+              <Activity className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Diagnóstico & Logs</span>
+            </button>
+          )}
         </div>
       </div>
 

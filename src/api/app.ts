@@ -404,6 +404,179 @@ app.get("/api/sharepoint/status", async (req: Request, res: Response) => {
   });
 });
 
+// Endpoint de diagnóstico detalhado de cada serviço (Token, Membros, Relatórios, Células)
+app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
+  const isVercel = !!process.env.VERCEL;
+  const startTime = Date.now();
+  
+  const results: any = {
+    timestamp: new Date().toISOString(),
+    environment: {
+      isVercel,
+      runtime: isVercel ? "Vercel Serverless Function" : "Node.js Container / Local",
+      nodeVersion: process.version,
+      platform: process.platform,
+      vercelRegion: process.env.VERCEL_REGION || "local-dev",
+      sharepointUserConfigured: !!SP_USER,
+      sharepointUserMasked: SP_USER ? SP_USER.replace(/(.{2})(.*)(@.*)/, "$1***$3") : "não configurado",
+      sharepointPassConfigured: !!SP_PASS,
+      sharepointPassLength: SP_PASS ? SP_PASS.length : 0,
+      siteUrl: SP_SITE_URL,
+      clientId: MS_CLIENT_ID
+    },
+    checks: [],
+    overallStatus: "SUCCESS",
+    totalDurationMs: 0
+  };
+
+  // Check 1: Microsoft OAuth2 Token
+  const t0 = Date.now();
+  let token = "";
+  try {
+    const params = new URLSearchParams({
+      grant_type: "password",
+      client_id: MS_CLIENT_ID,
+      username: SP_USER,
+      password: SP_PASS,
+      resource: SP_RESOURCE
+    });
+    const msRes = await fetch("https://login.microsoftonline.com/organizations/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString()
+    });
+    const msDuration = Date.now() - t0;
+    const msText = await msRes.text().catch(() => "");
+    let msJson: any = null;
+    try { msJson = JSON.parse(msText); } catch {}
+
+    if (msRes.ok && msJson?.access_token) {
+      token = msJson.access_token;
+      cache.token = token;
+      cache.tokenExpiresAt = Date.now() + (Number(msJson.expires_in || 3600) * 1000);
+      results.checks.push({
+        id: "auth_token",
+        name: "Autenticação Microsoft OAuth2",
+        endpoint: "https://login.microsoftonline.com/organizations/oauth2/token",
+        method: "POST",
+        status: msRes.status,
+        statusText: msRes.statusText,
+        durationMs: msDuration,
+        success: true,
+        details: `Token gerado com sucesso (expira em ${msJson.expires_in || 3600}s). Tamanho: ${token.length} caracteres.`
+      });
+    } else {
+      results.overallStatus = "FAILED";
+      results.checks.push({
+        id: "auth_token",
+        name: "Autenticação Microsoft OAuth2",
+        endpoint: "https://login.microsoftonline.com/organizations/oauth2/token",
+        method: "POST",
+        status: msRes.status,
+        statusText: msRes.statusText,
+        durationMs: msDuration,
+        success: false,
+        error: msJson?.error_description || msJson?.error || msText || "Falha ao obter token da Microsoft",
+        details: msJson || msText
+      });
+    }
+  } catch (err: any) {
+    results.overallStatus = "FAILED";
+    results.checks.push({
+      id: "auth_token",
+      name: "Autenticação Microsoft OAuth2",
+      endpoint: "https://login.microsoftonline.com/organizations/oauth2/token",
+      method: "POST",
+      status: 0,
+      durationMs: Date.now() - t0,
+      success: false,
+      error: err?.message || String(err)
+    });
+  }
+
+  // Se o token falhou, encerra prematuramente com os dados coletados
+  if (!token) {
+    results.totalDurationMs = Date.now() - startTime;
+    return res.json(results);
+  }
+
+  // Helper para testar listas individuais
+  async function testListCheck(id: string, listName: string, guid: string, maxItems: number = 5) {
+    const tStart = Date.now();
+    try {
+      const url = `${SP_SITE_URL}/_api/web/lists(guid'${guid}')/items?$top=${maxItems}`;
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json;odata=verbose"
+        }
+      });
+      const duration = Date.now() - tStart;
+      const text = await resp.text().catch(() => "");
+      let json: any = null;
+      try { json = JSON.parse(text); } catch {}
+
+      if (resp.ok) {
+        const count = json?.d?.results?.length ?? (Array.isArray(json?.value) ? json.value.length : 0);
+        results.checks.push({
+          id,
+          name: `Lista SharePoint: ${listName}`,
+          endpoint: url,
+          method: "GET",
+          guid,
+          status: resp.status,
+          statusText: resp.statusText,
+          durationMs: duration,
+          success: true,
+          itemCount: count,
+          details: `Consulta bem-sucedida. ${count} itens retornados em ${duration}ms.`
+        });
+      } else {
+        if (results.overallStatus === "SUCCESS") results.overallStatus = "WARNING";
+        results.checks.push({
+          id,
+          name: `Lista SharePoint: ${listName}`,
+          endpoint: url,
+          method: "GET",
+          guid,
+          status: resp.status,
+          statusText: resp.statusText,
+          durationMs: duration,
+          success: false,
+          error: json?.error?.message?.value || json?.error || text.slice(0, 300) || `HTTP ${resp.status}`,
+          details: text.slice(0, 400)
+        });
+      }
+    } catch (err: any) {
+      if (results.overallStatus === "SUCCESS") results.overallStatus = "WARNING";
+      results.checks.push({
+        id,
+        name: `Lista SharePoint: ${listName}`,
+        endpoint: `${SP_SITE_URL}/_api/web/lists(guid'${guid}')/items`,
+        method: "GET",
+        guid,
+        status: 0,
+        durationMs: Date.now() - tStart,
+        success: false,
+        error: err?.message || String(err)
+      });
+    }
+  }
+
+  // Check 2: BD_membros
+  await testListCheck("bd_membros", "BD_membros", KNOWN_LIST_GUIDS["BD_membros"], 5);
+
+  // Check 3: BD_Relatorio
+  await testListCheck("bd_relatorio", "BD_Relatorio", KNOWN_LIST_GUIDS["BD_Relatorio"], 5);
+
+  // Check 4: BD_celulas
+  await testListCheck("bd_celulas", "BD_celulas", KNOWN_LIST_GUIDS["BD_celulas"], 5);
+
+  results.totalDurationMs = Date.now() - startTime;
+  return res.json(results);
+});
+
 // Listar membros sincronizados
 app.get("/api/sharepoint/membros", async (req: Request, res: Response) => {
   if (cache.membros.length === 0) {

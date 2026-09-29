@@ -64,6 +64,8 @@ export const Header: React.FC<HeaderProps> = ({
         return 'Validar Entrega de Envelope';
       case 'fluxo-caixa':
         return 'Relatórios de Fluxo de Caixa';
+      case 'diagnostico':
+        return 'Diagnóstico & Logs da API';
       default:
         return 'Tesouraria AppChurch';
     }
