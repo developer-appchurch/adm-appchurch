@@ -311,12 +311,34 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
     }
 
     const nomeTesoureiro = usuarioLogado?.nome || 'Junio Fonteles';
-    exibirAlerta(`Relatório "${celulaNome}" confirmado por ${nomeTesoureiro} (ID: ${idTesoureiro}) em ${dataHojeBR}.`);
+    exibirAlerta(`Relatório "${celulaNome}" confirmado por ${nomeTesoureiro} em ${dataHojeBR}.`);
     setSelecionados(prev => {
       const next = new Set(prev);
       next.delete(id);
       return next;
     });
+  };
+
+  // Helper para obter o nome do tesoureiro a partir do ID salvo no SharePoint
+  const getNomeTesoureiroPorId = (idOuNome: string | number | undefined | null): string => {
+    if (!idOuNome) return usuarioLogado?.nome || 'Junio Fonteles';
+    const str = String(idOuNome).trim();
+    if (!str) return usuarioLogado?.nome || 'Junio Fonteles';
+
+    // Se já for um nome textual
+    if (isNaN(Number(str))) return str;
+
+    // Busca na lista de membros do SharePoint
+    const spService = SharePointService.getInstance();
+    const membros = spService.getMembros();
+    const membro = membros.find(m => String(m.id || m.ID) === str);
+    if (membro && membro.nome) return membro.nome;
+
+    if (str === '4') return 'Junio Fonteles';
+    if (usuarioLogado && String(usuarioLogado.id || usuarioLogado.ID) === str) {
+      return usuarioLogado.nome;
+    }
+    return usuarioLogado?.nome || 'Junio Fonteles';
   };
 
   // Desfazer Confirmação
@@ -384,7 +406,7 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
     }
 
     const nomeTesoureiro = usuarioLogado?.nome || 'Junio Fonteles';
-    exibirAlerta(`${ids.length} relatórios confirmados por ${nomeTesoureiro} (ID: ${idTesoureiro}) em ${dataHojeBR}.`);
+    exibirAlerta(`${ids.length} relatórios confirmados por ${nomeTesoureiro} em ${dataHojeBR}.`);
     setSelecionados(new Set());
   };
 
@@ -412,14 +434,11 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
             </span>
           </h2>
 
-          {/* Usuário Tesoureiro Ativo */}
+          {/* Usuário Tesoureiro Ativo (Exibe somente o nome do Tesoureiro) */}
           <div className="flex items-center gap-2 bg-[#20263c] px-3 py-1 rounded-lg border border-[#313956] text-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-slate-300">Tesoureiro:</span>
             <strong className="text-white">{usuarioLogado?.nome || 'Junio Fonteles'}</strong>
-            <span className="text-[11px] font-mono px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/30 font-bold">
-              ID: {usuarioLogado?.id || usuarioLogado?.ID || 4}
-            </span>
           </div>
         </div>
 
@@ -588,8 +607,8 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
                         <div>{celulaNome}</div>
                         {isConfirmado && (item.ID_TESOUREIRO || item.DATA_TESOURARIA) && (
                           <div className="text-[11px] font-normal text-slate-600 flex flex-wrap items-center gap-1.5 mt-1">
-                            <span className="font-mono font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded text-[10px]">
-                              ID Tesoureiro: {item.ID_TESOUREIRO}
+                            <span className="font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-[11px]">
+                              Tesoureiro: {getNomeTesoureiroPorId(item.ID_TESOUREIRO)}
                             </span>
                             {item.DATA_TESOURARIA && (
                               <span className="text-[10px] text-slate-500 font-medium">
