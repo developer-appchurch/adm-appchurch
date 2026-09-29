@@ -10,7 +10,17 @@ app.use(express.json());
 // SharePoint Microsoft 365 Config
 const SP_USER = process.env.SHAREPOINT_USER || "midia.sobral@paz.church";
 const SP_PASS = process.env.SHAREPOINT_PASS || "Pazsobral23";
-const SP_SITE_URL = process.env.SHAREPOINT_SITE_URL || "https://pazchurch.sharepoint.com/sites/PazSobral";
+
+function sanitizeSharePointSiteUrl(rawUrl?: string): string {
+  let url = String(rawUrl || "https://pazchurch.sharepoint.com/sites/PazSobral").trim();
+  // Remove /Lists/ ou /Lists no final se vier de variáveis de ambiente
+  url = url.replace(/\/Lists\/?$/i, "");
+  // Remove barras extras no final
+  url = url.replace(/\/+$/, "");
+  return url || "https://pazchurch.sharepoint.com/sites/PazSobral";
+}
+
+const SP_SITE_URL = sanitizeSharePointSiteUrl(process.env.SHAREPOINT_SITE_URL);
 const SP_RESOURCE = "https://pazchurch.sharepoint.com";
 const MS_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"; // Microsoft Office Public Client
 
@@ -69,14 +79,41 @@ async function getMicrosoftToken(): Promise<string> {
   return cache.token!;
 }
 
-// Buscar itens de uma lista do SharePoint com paginação completa
+// Mapeamento de GUIDs canônicos das listas do SharePoint (imunes a erros 404 e alterações de título)
+const KNOWN_LIST_GUIDS: Record<string, string> = {
+  "BD_membros": "0f0da17f-880f-4391-9521-1e41636cfecc",
+  "BD_Relatorio": "82228774-77ec-4574-9b57-19272c6910af",
+  "BD_celulas": "dfa7d45a-9023-4c35-a7f3-1c976360ffe0",
+  "BD_PerfilPermissao": "4bafa1ae-bb82-4084-9aff-dd8ec5a6a8ab",
+  "BD_Bairros": "bd3a1a3f-b775-421d-8269-1d7acdcacfba"
+};
+
+// Obter URL base segura para consulta de itens da lista (prioriza GUID para evitar 404)
+async function getSharePointListUrl(listTitle: string, token: string, orderByIdDesc: boolean = false): Promise<string> {
+  const orderParam = orderByIdDesc ? "&$orderby=Id%20desc" : "";
+  const guid = KNOWN_LIST_GUIDS[listTitle];
+
+  if (guid) {
+    return `${SP_SITE_URL}/_api/web/lists(guid'${guid}')/items?$top=5000${orderParam}`;
+  }
+
+  return `${SP_SITE_URL}/_api/web/lists/getbytitle('${listTitle}')/items?$top=5000${orderParam}`;
+}
+
+// Buscar itens de uma lista do SharePoint com paginação completa e fallback automático
 async function fetchSharePointList(listTitle: string, maxItems: number = 25000, orderByIdDesc: boolean = false): Promise<any[]> {
   const token = await getMicrosoftToken();
   let items: any[] = [];
-  const orderParam = orderByIdDesc ? "&$orderby=Id%20desc" : "";
-  let nextUrl: string | null = `${SP_SITE_URL}/_api/web/lists/getbytitle('${encodeURIComponent(listTitle)}')/items?$top=5000${orderParam}`;
+  
+  let nextUrl: string | null = await getSharePointListUrl(listTitle, token, orderByIdDesc);
+  let attemptFallback = true;
   
   while (nextUrl && items.length < maxItems) {
+    // Normaliza URL caso venha relativa da paginação do SharePoint
+    if (nextUrl.startsWith("/")) {
+      nextUrl = `https://pazchurch.sharepoint.com${nextUrl}`;
+    }
+
     const res: any = await fetch(nextUrl, {
       headers: {
         "Authorization": `Bearer ${token}`,
@@ -85,11 +122,41 @@ async function fetchSharePointList(listTitle: string, maxItems: number = 25000, 
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Erro ao consultar lista ${listTitle}: ${res.status} - ${errText}`);
+      // Se retornar 404 na primeira tentativa por título, tenta descobrir o GUID dinamicamente
+      if (res.status === 404 && attemptFallback) {
+        attemptFallback = false;
+        try {
+          const listsRes = await fetch(`${SP_SITE_URL}/_api/web/lists?$select=Id,Title`, {
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json;odata=verbose"
+            }
+          });
+          if (listsRes.ok) {
+            const listsData = await listsRes.json();
+            const allLists: any[] = listsData?.d?.results || [];
+            const found = allLists.find((l: any) => 
+              l.Title?.toLowerCase() === listTitle.toLowerCase() ||
+              l.Title?.toLowerCase().includes(listTitle.toLowerCase())
+            );
+            if (found && found.Id) {
+              KNOWN_LIST_GUIDS[listTitle] = found.Id;
+              const orderParam = orderByIdDesc ? "&$orderby=Id%20desc" : "";
+              nextUrl = `${SP_SITE_URL}/_api/web/lists(guid'${found.Id}')/items?$top=5000${orderParam}`;
+              continue; // Re-executa com o GUID encontrado
+            }
+          }
+        } catch (discoverErr) {
+          console.warn(`[SharePoint] Aviso na autodescoberta da lista ${listTitle}:`, discoverErr);
+        }
+      }
+
+      const errText = await res.text().catch(() => "");
+      console.warn(`[SharePoint] Consulta à lista ${listTitle} retornou ${res.status}: ${errText.slice(0, 100)}`);
+      break;
     }
 
-    const data: any = await res.json();
+    const data: any = await res.json().catch(() => null);
     const results = data?.d?.results || data?.value || [];
     items.push(...results);
     nextUrl = data?.d?.__next || null;
@@ -175,18 +242,33 @@ async function sincronizarListasSharePoint(): Promise<void> {
   }
 }
 
-// Inicia sincronização ao ligar o servidor
-sincronizarListasSharePoint().catch(console.error);
-
-// Agendar renovação periódica a cada 15 minutos
-setInterval(() => {
+// Inicia sincronização ao ligar o servidor (se não estiver em ambiente serverless)
+if (!process.env.VERCEL) {
   sincronizarListasSharePoint().catch(console.error);
-}, 15 * 60 * 1000);
+
+  // Agendar renovação periódica a cada 15 minutos em servidores dedicados
+  setInterval(() => {
+    sincronizarListasSharePoint().catch(console.error);
+  }, 15 * 60 * 1000);
+}
+
+// Helper para garantir dados sincronizados em cold starts (Vercel Serverless)
+async function garantirDadosSincronizados(): Promise<void> {
+  if (cache.membros.length === 0 || cache.relatorios.length === 0 || cache.celulas.length === 0) {
+    await sincronizarListasSharePoint().catch((err) => {
+      console.warn("[SharePoint] Aviso na sincronização sob demanda:", err?.message || err);
+    });
+  }
+}
 
 // --- ROTAS DA API ---
 
 // Status da conexão
-app.get("/api/sharepoint/status", (req: Request, res: Response) => {
+app.get("/api/sharepoint/status", async (req: Request, res: Response) => {
+  if (cache.membros.length === 0 && cache.relatorios.length === 0) {
+    await garantirDadosSincronizados();
+  }
+
   res.json({
     status: cache.status,
     conta: SP_USER,
@@ -200,7 +282,11 @@ app.get("/api/sharepoint/status", (req: Request, res: Response) => {
 });
 
 // Listar membros sincronizados
-app.get("/api/sharepoint/membros", (req: Request, res: Response) => {
+app.get("/api/sharepoint/membros", async (req: Request, res: Response) => {
+  if (cache.membros.length === 0) {
+    await garantirDadosSincronizados();
+  }
+
   res.json({
     sucesso: true,
     total: cache.membros.length,
@@ -303,10 +389,10 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
     );
   });
 
-  // Se não encontrou no cache mas o cache estiver pequeno, tenta buscar direto no SharePoint
-  if (!membro && cache.membros.length < 50) {
+  // Se não encontrou no cache mas o cache estiver vazio, tenta sincronizar uma vez
+  if (!membro && cache.membros.length === 0) {
     try {
-      const direct = await fetchSharePointList("BD_membros", 2000, false);
+      const direct = await fetchSharePointList("BD_membros", 5000, false);
       if (Array.isArray(direct) && direct.length > 0) {
         cache.membros = direct.map((m: any) => ({
           id: m.ID || m.Id,
@@ -338,8 +424,8 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
           );
         });
       }
-    } catch (e) {
-      console.warn("[Auth] Erro na consulta sob demanda:", e);
+    } catch (e: any) {
+      console.warn("[Auth] Aviso ao sincronizar membros sob demanda:", e?.message || e);
     }
   }
 
@@ -411,7 +497,11 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
 });
 
 // Obter relatórios da lista BD_Relatorio
-app.get("/api/sharepoint/relatorios", (req: Request, res: Response) => {
+app.get("/api/sharepoint/relatorios", async (req: Request, res: Response) => {
+  if (cache.relatorios.length === 0) {
+    await garantirDadosSincronizados();
+  }
+
   res.json({
     sucesso: true,
     total: cache.relatorios.length,
@@ -420,7 +510,11 @@ app.get("/api/sharepoint/relatorios", (req: Request, res: Response) => {
 });
 
 // Obter células da lista BD_celulas
-app.get("/api/sharepoint/celulas", (req: Request, res: Response) => {
+app.get("/api/sharepoint/celulas", async (req: Request, res: Response) => {
+  if (cache.celulas.length === 0) {
+    await garantirDadosSincronizados();
+  }
+
   res.json({
     sucesso: true,
     total: cache.celulas.length,
@@ -429,7 +523,11 @@ app.get("/api/sharepoint/celulas", (req: Request, res: Response) => {
 });
 
 // Obter setores distintos da tabela BD_celulas
-app.get("/api/sharepoint/setores", (req: Request, res: Response) => {
+app.get("/api/sharepoint/setores", async (req: Request, res: Response) => {
+  if (cache.celulas.length === 0) {
+    await garantirDadosSincronizados();
+  }
+
   const setoresUnicos = Array.from(
     new Set(
       cache.celulas
@@ -653,4 +751,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// Inicia servidor somente se não estiver rodando no Vercel Serverless
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export { app };
+export default app;

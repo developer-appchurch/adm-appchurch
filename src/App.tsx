@@ -106,24 +106,34 @@ export default function App() {
 
   // Callback de sucesso ao autenticar usuário presente na tabela BD_membros
   const handleLoginSuccess = (membro: MembroItem) => {
+    console.log('[App] handleLoginSuccess recebido para:', membro.nome);
+    
     // Salva o nome e os dados do usuário em variável de estado
     setUsuarioLogado(membro);
     try {
       localStorage.setItem('tesouraria_usuario_logado', JSON.stringify(membro));
-    } catch {}
+      console.log('[App] tesouraria_usuario_logado salvo no localStorage.');
+    } catch (e) {
+      console.warn('[App] Aviso ao salvar usuário logado no localStorage:', e);
+    }
 
     // Atualiza a sessão e configuração geral
-    const updatedCfg = spService.updateConfig({
-      usuarioConectado: {
-        nome: membro.nome || membro.Title || 'Admin',
-        email: membro.email || `${membro.login}@pazchurch.com`,
-        cargo: membro.cargo || 'Membro / Liderança',
-        conectadoEm: new Date().toISOString().replace('T', ' ').slice(0, 19)
-      }
-    });
-    setSharePointConfig(updatedCfg);
+    try {
+      const updatedCfg = spService.updateConfig({
+        usuarioConectado: {
+          nome: membro.nome || membro.Title || 'Admin',
+          email: membro.email || `${membro.login}@pazchurch.com`,
+          cargo: membro.cargo || 'Membro / Liderança',
+          conectadoEm: new Date().toISOString().replace('T', ' ').slice(0, 19)
+        }
+      });
+      setSharePointConfig(updatedCfg);
+    } catch (eCfg) {
+      console.warn('[App] Aviso ao atualizar config com usuário:', eCfg);
+    }
 
     // Navega diretamente para a tela de Menu do aplicativo
+    console.log('[App] Mudando currentView de "login" para "menu-admin"...');
     setCurrentView('menu-admin');
     showNotification(`Bem-vindo(a), ${membro.nome}!`);
   };

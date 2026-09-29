@@ -75,24 +75,31 @@ export const LoginView: React.FC<LoginViewProps> = ({
     const loginLimpo = login.trim();
     const senhaLimpa = senha.trim();
 
+    console.log(`[LoginView] Submetendo formulário de login para usuário: "${loginLimpo}"`);
+
     // Valida se login e senha foram preenchidos
     if (!loginLimpo || !senhaLimpa) {
-      setErroLogin('Login ou Senha incorretos');
+      console.warn('[LoginView] Validação impedida: login ou senha em branco.');
+      setErroLogin('Por favor, preencha o login e a senha.');
       return;
     }
 
     setIsAuthenticating(true);
 
     try {
+      console.log('[LoginView] Solicitando validação ao SharePointService...');
       // Consulta oficial contra a lista BD_membros do SharePoint via backend com validação de login e senha
       const resultado = await spService.consultarMembroSharePoint(loginLimpo, senhaLimpa);
+      console.log('[LoginView] Resultado recebido do SharePointService:', resultado);
 
       if (!resultado.sucesso || !resultado.membro) {
+        console.warn(`[LoginView] Falha no login: ${resultado.erro}`);
         setErroLogin(resultado.erro || 'Login ou Senha incorretos');
         setIsAuthenticating(false);
         return;
       }
 
+      console.log(`[LoginView] Login validado com sucesso para: ${resultado.membro.nome}! Persistindo sessão...`);
       setSucessoLogin(`Bem-vindo(a), ${resultado.membro.nome}!`);
       
       if (onConfigChanged) {
@@ -100,10 +107,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
       }
 
       setTimeout(() => {
+        console.log('[LoginView] Disparando callback onLoginSuccess com os dados do usuário.');
         onLoginSuccess(resultado.membro!);
-      }, 400);
+      }, 300);
     } catch (err: any) {
-      setErroLogin('Login ou Senha incorretos');
+      console.error('[LoginView] Erro inesperado durante o fluxo de autenticação:', err);
+      setErroLogin(err?.message || 'Erro ao processar autenticação. Tente novamente.');
     } finally {
       setIsAuthenticating(false);
     }
