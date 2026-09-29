@@ -52,27 +52,41 @@ export default function App() {
   // Carrega lançamentos iniciais e conecta automaticamente ao SharePoint
   const carregarDados = useCallback(() => {
     const dados = spService.getLancamentos();
+    console.log(`[App] carregarDados executado. Lançamentos carregados: ${dados.length}`);
     setLancamentos(dados);
     setSharePointConfig(spService.getConfig());
   }, [spService]);
 
+  // Sincroniza ativamente com o backend e atualiza o estado
+  const sincronizarDadosCompletos = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const res = await spService.conectarEAtualizarAutomatico();
+      carregarDados();
+      return res;
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [spService, carregarDados]);
+
   useEffect(() => {
     carregarDados();
     // Conecta automaticamente a todas as listas do SharePoint ao ser executado
-    spService.conectarEAtualizarAutomatico().then((res) => {
-      if (res.sucesso) {
-        carregarDados();
-      }
-    });
-  }, [carregarDados, spService]);
+    sincronizarDadosCompletos();
+  }, [carregarDados, sincronizarDadosCompletos]);
+
+  // Atualiza dados sempre que a visualização mudar
+  useEffect(() => {
+    carregarDados();
+    if (currentView !== 'login' && spService.getLancamentos().length === 0) {
+      sincronizarDadosCompletos();
+    }
+  }, [currentView, carregarDados, sincronizarDadosCompletos, spService]);
 
   // Ação de Atualizar / Refresh
   const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await spService.conectarEAtualizarAutomatico();
-    carregarDados();
-    setIsRefreshing(false);
-    showNotification('Dados de tesouraria e SharePoint sincronizados com sucesso.');
+    const res = await sincronizarDadosCompletos();
+    showNotification(`Sincronizado com SharePoint: ${res.relatoriosCount} relatórios e ${res.membrosCount} membros.`);
   };
 
   // Confirmar validação de envelope com dados do usuário logado
@@ -105,7 +119,7 @@ export default function App() {
   };
 
   // Callback de sucesso ao autenticar usuário presente na tabela BD_membros
-  const handleLoginSuccess = (membro: MembroItem) => {
+  const handleLoginSuccess = async (membro: MembroItem) => {
     console.log('[App] handleLoginSuccess recebido para:', membro.nome);
     
     // Salva o nome e os dados do usuário em variável de estado
@@ -135,7 +149,13 @@ export default function App() {
     // Navega diretamente para a tela de Menu do aplicativo
     console.log('[App] Mudando currentView de "login" para "menu-admin"...');
     setCurrentView('menu-admin');
+    carregarDados();
     showNotification(`Bem-vindo(a), ${membro.nome}!`);
+
+    // Sincroniza em background para garantir que todos os relatórios estejam carregados
+    sincronizarDadosCompletos().then(() => {
+      carregarDados();
+    });
   };
 
   // Se a view for Login

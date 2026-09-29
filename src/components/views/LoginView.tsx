@@ -102,8 +102,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
       }
 
       console.log(`[LoginView] Login validado com sucesso para: ${resultado.membro.nome}! Persistindo sessão...`);
-      setSucessoLogin(`Bem-vindo(a), ${resultado.membro.nome}!`);
+      setSucessoLogin(`Bem-vindo(a), ${resultado.membro.nome}! Carregando dados...`);
       
+      // Sincroniza listas do SharePoint (BD_membros, BD_Relatorios, BD_celulas) imediatamente
+      spService.conectarEAtualizarAutomatico().catch(e => {
+        console.warn('[LoginView] Sincronização em background iniciada:', e);
+      });
+
       if (onConfigChanged) {
         onConfigChanged(spService.getConfig());
       }

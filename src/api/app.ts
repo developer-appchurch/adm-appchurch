@@ -104,14 +104,26 @@ async function getSharePointListUrl(listTitle: string, token: string, orderByIdD
   return `${SP_SITE_URL}/_api/web/lists/getbytitle('${listTitle}')/items?$top=5000${orderParam}`;
 }
 
-async function fetchSharePointList(listTitle: string, maxItems: number = 25000, orderByIdDesc: boolean = false): Promise<any[]> {
+async function fetchSharePointList(
+  listTitle: string, 
+  maxItems: number = 10000, 
+  orderByIdDesc: boolean = false,
+  maxDurationMs: number = 6000
+): Promise<any[]> {
   const token = await getMicrosoftToken();
   let items: any[] = [];
+  const startTime = Date.now();
   
   let nextUrl: string | null = await getSharePointListUrl(listTitle, token, orderByIdDesc);
   let attemptFallback = true;
   
   while (nextUrl && items.length < maxItems) {
+    // Evita timeout da Vercel (limite de 10s) parando a paginação com segurança
+    if (Date.now() - startTime > maxDurationMs && items.length > 0) {
+      console.log(`[SharePoint] Limite de tempo seguro para Serverless atingido para ${listTitle}: ${items.length} itens coletados.`);
+      break;
+    }
+
     if (nextUrl.startsWith("/")) {
       nextUrl = `https://pazchurch.sharepoint.com${nextUrl}`;
     }
