@@ -16,8 +16,8 @@ app.use((req, res, next) => {
 });
 
 // SharePoint Microsoft 365 Config
-const SP_USER = process.env.SHAREPOINT_USER || "midia.sobral@paz.church";
-const SP_PASS = process.env.SHAREPOINT_PASS || "Pazsobral23";
+let SP_USER = process.env.SHAREPOINT_USER || "midia.sobral@paz.church";
+let SP_PASS = process.env.SHAREPOINT_PASS || "Pazsobral23";
 
 function sanitizeSharePointSiteUrl(rawUrl?: string): string {
   let url = String(rawUrl || "https://pazchurch.sharepoint.com/sites/PazSobral").trim();
@@ -26,9 +26,9 @@ function sanitizeSharePointSiteUrl(rawUrl?: string): string {
   return url || "https://pazchurch.sharepoint.com/sites/PazSobral";
 }
 
-const SP_SITE_URL = sanitizeSharePointSiteUrl(process.env.SHAREPOINT_SITE_URL);
-const SP_RESOURCE = "https://pazchurch.sharepoint.com";
-const MS_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"; // Microsoft Office Public Client
+let SP_SITE_URL = sanitizeSharePointSiteUrl(process.env.SHAREPOINT_SITE_URL);
+let SP_RESOURCE = "https://pazchurch.sharepoint.com";
+let MS_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c"; // Microsoft Office Public Client
 
 interface CachedData {
   token: string | null;
@@ -291,6 +291,85 @@ if (!process.env.VERCEL) {
 }
 
 // --- ROTAS DA API ---
+
+// Conectar e autenticar diretamente com credenciais do SharePoint
+app.post("/api/sharepoint/conectar-credenciais", async (req: Request, res: Response) => {
+  const { username, password, siteUrl, clientId } = req.body;
+  const userLimpo = String(username || "").trim();
+  const passLimpa = String(password || "").trim();
+
+  if (!userLimpo || !passLimpa) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: "Por favor, informe o usuário/e-mail e a senha da conta Microsoft do SharePoint."
+    });
+  }
+
+  try {
+    console.log(`[SharePoint] Tentando autenticar novas credenciais para conta: ${userLimpo}...`);
+    SP_USER = userLimpo;
+    SP_PASS = passLimpa;
+    if (siteUrl) SP_SITE_URL = sanitizeSharePointSiteUrl(siteUrl);
+    if (clientId) MS_CLIENT_ID = String(clientId).trim();
+
+    // Invalida cache de token antigo
+    cache.token = null;
+    cache.tokenExpiresAt = 0;
+    cache.membros = [];
+    cache.relatorios = [];
+    cache.celulas = [];
+
+    // 1. Tenta obter token na Microsoft
+    const token = await getMicrosoftToken();
+
+    // 2. Carrega membros
+    const membros = await carregarMembrosCompleto();
+
+    // 3. Tenta carregar relatórios
+    try {
+      const rels = await fetchSharePointList("BD_Relatorio", 2000, true);
+      if (Array.isArray(rels)) {
+        cache.relatorios = rels;
+      }
+    } catch (eRel) {
+      console.warn("[SharePoint] Aviso ao carregar relatórios:", eRel);
+    }
+
+    // 4. Células
+    try {
+      const cels = await fetchSharePointList("BD_celulas", 500, false);
+      if (Array.isArray(cels)) {
+        cache.celulas = cels;
+      }
+    } catch (eCel) {
+      console.warn("[SharePoint] Aviso ao carregar células:", eCel);
+    }
+
+    cache.status = "CONECTADO";
+    cache.lastSync = new Date().toISOString();
+    cache.erro = null;
+
+    console.log(`[SharePoint] Conexão bem-sucedida! ${cache.membros.length} membros, ${cache.relatorios.length} relatórios.`);
+
+    return res.json({
+      sucesso: true,
+      mensagem: "Conectado ao SharePoint com sucesso!",
+      conta: SP_USER,
+      siteUrl: SP_SITE_URL,
+      membrosCount: cache.membros.length,
+      relatoriosCount: cache.relatorios.length,
+      celulasCount: cache.celulas.length
+    });
+  } catch (err: any) {
+    console.error("[SharePoint] Falha ao autenticar credenciais:", err?.message || err);
+    cache.status = "ERRO";
+    cache.erro = err?.message || "Falha na autenticação com o SharePoint";
+    return res.status(401).json({
+      sucesso: false,
+      erro: err?.message || "Credenciais inválidas ou erro ao conectar na Microsoft Online."
+    });
+  }
+});
 
 // Status da conexão
 app.get("/api/sharepoint/status", async (req: Request, res: Response) => {

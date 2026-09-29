@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { User, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { User, RefreshCw, CheckCircle2, AlertCircle, Database, ShieldCheck, Settings } from 'lucide-react';
 import { SharePointService } from '../../services/sharepointService';
 import { SharePointConfig, MembroItem } from '../../types';
+import { SharePointLoginModal } from './SharePointLoginModal';
 
 interface LoginViewProps {
   onLoginSuccess: (membro: MembroItem) => void;
@@ -20,53 +21,41 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [sucessoLogin, setSucessoLogin] = useState<string | null>(null);
   const [conexaoStatus, setConexaoStatus] = useState<'conectado' | 'erro' | 'verificando'>('verificando');
   const [statusDetalhe, setStatusDetalhe] = useState<string>('Verificando conexão com o SharePoint...');
+  const [isModalSharePointOpen, setIsModalSharePointOpen] = useState(false);
 
   const spService = SharePointService.getInstance();
 
-  // Verifica o status de conexão da API com o SharePoint ao carregar a tela
-  useEffect(() => {
-    let montado = true;
-
-    const verificarConexao = async () => {
-      try {
-        const resp = await fetch('/api/sharepoint/status').catch(() => null);
-        if (!resp || !resp.ok) {
-          if (montado) {
-            // Em ambientes serverless ou primeiro acesso, se a rota responder com erro temporário,
-            // mantém conectado para permitir login com contas administrativas e fallback local
-            setConexaoStatus('conectado');
-            setStatusDetalhe('Serviço SharePoint pronto para autenticação');
-          }
-          return;
-        }
-        const data = await resp.json().catch(() => null);
-        if (montado && data) {
-          if (data.status === 'CONECTADO' || data.conta) {
-            setConexaoStatus('conectado');
-            setStatusDetalhe(
-              `Conectado ao SharePoint (${data.totalRelatorios ?? 0} relatórios • ${data.totalMembros ?? 0} membros)`
-            );
-          } else {
-            setConexaoStatus('erro');
-            setStatusDetalhe(data.erro || 'Não foi possível sincronizar com o SharePoint');
-          }
-        }
-      } catch (err) {
-        if (montado) {
+  const verificarConexao = async () => {
+    try {
+      const resp = await fetch('/api/sharepoint/status').catch(() => null);
+      if (!resp || !resp.ok) {
+        setConexaoStatus('conectado');
+        setStatusDetalhe('Serviço SharePoint pronto para autenticação');
+        return;
+      }
+      const data = await resp.json().catch(() => null);
+      if (data) {
+        if (data.status === 'CONECTADO' || data.conta) {
           setConexaoStatus('conectado');
-          setStatusDetalhe('Serviço SharePoint pronto para autenticação');
+          setStatusDetalhe(
+            `Conectado ao SharePoint (${data.totalRelatorios ?? 0} relatórios • ${data.totalMembros ?? 0} membros)`
+          );
+        } else {
+          setConexaoStatus('erro');
+          setStatusDetalhe(data.erro || 'Não foi possível sincronizar com o SharePoint');
         }
       }
-    };
+    } catch (err) {
+      setConexaoStatus('conectado');
+      setStatusDetalhe('Serviço SharePoint pronto para autenticação');
+    }
+  };
 
+  // Verifica o status de conexão da API com o SharePoint ao carregar a tela
+  useEffect(() => {
     verificarConexao();
-
-    // Revalida a cada 30 segundos
     const intervalo = setInterval(verificarConexao, 30000);
-    return () => {
-      montado = false;
-      clearInterval(intervalo);
-    };
+    return () => clearInterval(intervalo);
   }, []);
 
   const handleAppSubmit = async (e: React.FormEvent) => {
@@ -125,14 +114,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
   };
 
+  const handleSharePointConectadoSucesso = () => {
+    setConexaoStatus('conectado');
+    setStatusDetalhe('Conexão com SharePoint autenticada e tabelas sincronizadas.');
+    verificarConexao();
+  };
+
   return (
     <div 
       id="login-page-container" 
       className="min-h-screen w-full bg-[#1c2030] flex items-center justify-center p-4 relative"
     >
+      {/* Modal de Autenticação Dedicada com SharePoint */}
+      <SharePointLoginModal
+        isOpen={isModalSharePointOpen}
+        onClose={() => setIsModalSharePointOpen(false)}
+        onConectadoComSucesso={handleSharePointConectadoSucesso}
+      />
+
       <div 
         id="login-card" 
-        className="bg-white rounded-2xl p-7 sm:p-9 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200 text-center"
+        className="bg-white rounded-2xl p-7 sm:p-9 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200 text-center relative"
       >
         {/* Brand Header */}
         <div className="flex flex-col items-center justify-center mb-6">
@@ -159,7 +161,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 {erroLogin}
               </p>
               <p className="text-[11px] text-red-600/90 font-medium">
-                Verifique se o login e a senha digitados estão corretos e tente novamente.
+                Verifique se o login e a senha digitados estão corretos. Caso a conexão com a base ainda não tenha sido autenticada, clique em "Conexão SharePoint" abaixo.
               </p>
             </div>
           </div>
@@ -183,7 +185,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         <form onSubmit={handleAppSubmit} className="space-y-4 text-left">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5 ml-1">
-              Login do Usuário
+              Login do Usuário (BD_membros)
             </label>
             <div className="relative">
               <input
@@ -194,7 +196,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   setLogin(e.target.value);
                   if (erroLogin) setErroLogin(null);
                 }}
-                placeholder="Digite seu login ou nome"
+                placeholder="Digite seu login cadastrado (ex: Jfonteles, Rai, Jeff)"
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white transition-colors"
                 required
                 autoFocus
@@ -215,7 +217,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   setSenha(e.target.value);
                   if (erroLogin) setErroLogin(null);
                 }}
-                placeholder="Digite sua senha"
+                placeholder="Digite sua senha cadastrada no SharePoint"
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white transition-colors"
                 required
               />
@@ -231,20 +233,34 @@ export const LoginView: React.FC<LoginViewProps> = ({
             {isAuthenticating ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
-                <span>Verificando credenciais...</span>
+                <span>Validando com o SharePoint...</span>
               </>
             ) : (
               <span>Entrar</span>
             )}
           </button>
         </form>
+
+        {/* Botão para abrir a tela de conexão com o SharePoint */}
+        <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => setIsModalSharePointOpen(true)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 text-xs font-semibold transition-all cursor-pointer border border-slate-200"
+          >
+            <Database className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Autenticação / Conexão SharePoint</span>
+          </button>
+        </div>
       </div>
 
-      {/* Sinalizador Circular no canto inferior direito */}
-      <div 
+      {/* Sinalizador Circular Interativo no canto inferior direito (clique abre a tela de login SharePoint) */}
+      <button
+        type="button"
         id="sharepoint-status-indicator"
-        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 select-none"
-        title={statusDetalhe}
+        onClick={() => setIsModalSharePointOpen(true)}
+        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 bg-[#181c2b]/90 hover:bg-[#23293f] border border-white/10 hover:border-indigo-500/50 px-3 py-2 rounded-full shadow-xl transition-all cursor-pointer group"
+        title="Clique para abrir a Autenticação com SharePoint"
       >
         <span className="relative flex h-3.5 w-3.5">
           {conexaoStatus === 'conectado' && (
@@ -263,7 +279,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-400 animate-pulse border border-white/20"></span>
           )}
         </span>
-      </div>
+        <span className="text-[11px] font-medium text-slate-300 group-hover:text-white flex items-center gap-1">
+          <span>SharePoint</span>
+          <Settings className="w-3 h-3 text-slate-400 group-hover:text-indigo-400" />
+        </span>
+      </button>
     </div>
   );
 };

@@ -260,6 +260,60 @@ export class SharePointService {
   }
 
   /**
+   * Conecta diretamente utilizando credenciais customizadas de conta Microsoft do SharePoint
+   */
+  public async conectarComCredenciaisSharePoint(dados: {
+    username: string;
+    password: string;
+    siteUrl?: string;
+    clientId?: string;
+  }): Promise<{ sucesso: boolean; mensagem?: string; erro?: string; membrosCount?: number; relatoriosCount?: number; celulasCount?: number }> {
+    try {
+      console.log(`[SharePointService] Conectando com credenciais fornecidas para ${dados.username}...`);
+      const res = await fetch('/api/sharepoint/conectar-credenciais', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dados)
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.sucesso) {
+        this.config.status = 'CONECTADO';
+        this.config.siteUrl = data.siteUrl || this.config.siteUrl;
+        
+        try {
+          localStorage.setItem('sharepoint_custom_auth', JSON.stringify({
+            username: dados.username,
+            siteUrl: dados.siteUrl || this.config.siteUrl,
+            clientId: dados.clientId,
+            conectadoEm: new Date().toISOString()
+          }));
+        } catch {}
+
+        await this.conectarEAtualizarAutomatico();
+
+        return {
+          sucesso: true,
+          mensagem: data.mensagem || 'Conectado ao SharePoint com sucesso!',
+          membrosCount: this.membros.length,
+          relatoriosCount: this.lancamentos.length,
+          celulasCount: this.celulas.length
+        };
+      }
+
+      return {
+        sucesso: false,
+        erro: data?.erro || `Erro HTTP ${res.status} ao autenticar com o SharePoint`
+      };
+    } catch (e: any) {
+      console.error('[SharePointService] Erro ao conectar com credenciais:', e);
+      return {
+        sucesso: false,
+        erro: e?.message || 'Erro de conexão de rede ao comunicar com o servidor.'
+      };
+    }
+  }
+
+  /**
    * Conecta automaticamente às listas do SharePoint através da API oficial da Microsoft
    * e sincroniza BD_membros, BD_Relatorio e BD_celulas com logs detalhados e captura de 404.
    */
