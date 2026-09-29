@@ -190,7 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </>
-        ) : (
+        ) : currentView !== 'validar-relatorios' ? (
           /* Ano selector padrão para outras telas */
           <div className="flex items-center gap-1.5 bg-[#252a40] px-2.5 py-1.5 rounded border border-[#394164]">
             <label htmlFor="select-ano-header" className="text-[11px] sm:text-xs text-slate-300 font-medium">
@@ -208,7 +208,7 @@ export const Header: React.FC<HeaderProps> = ({
               <option value={2023} className="bg-[#1c2030] text-white">2023</option>
             </select>
           </div>
-        )}
+        ) : null}
 
         {/* Refresh button (botão de sincronizar os dados) */}
         <button

@@ -19,6 +19,7 @@ import { SharePointService } from '../../services/sharepointService';
 interface ValidarRelatoriosViewProps {
   lancamentos: LancamentoTesouraria[];
   anoSelecionado: number;
+  onSelectAno?: (ano: number) => void;
   usuarioLogado?: MembroItem | null;
   onAtualizarLancamento?: (id: string, dados: Partial<LancamentoTesouraria>) => void;
   onConfirmarLancamento?: (id: string, idTesoureiro?: string | number, dataTesouraria?: string) => void;
@@ -26,9 +27,26 @@ interface ValidarRelatoriosViewProps {
   onRefresh: () => void;
 }
 
+const MESES_OPCOES = [
+  { valor: 'todos', label: 'Todos os Meses' },
+  { valor: '1', label: 'Janeiro' },
+  { valor: '2', label: 'Fevereiro' },
+  { valor: '3', label: 'Março' },
+  { valor: '4', label: 'Abril' },
+  { valor: '5', label: 'Maio' },
+  { valor: '6', label: 'Junho' },
+  { valor: '7', label: 'Julho' },
+  { valor: '8', label: 'Agosto' },
+  { valor: '9', label: 'Setembro' },
+  { valor: '10', label: 'Outubro' },
+  { valor: '11', label: 'Novembro' },
+  { valor: '12', label: 'Dezembro' }
+];
+
 export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
   lancamentos,
   anoSelecionado,
+  onSelectAno,
   usuarioLogado,
   onAtualizarLancamento,
   onConfirmarLancamento,
@@ -36,6 +54,7 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
   onRefresh
 }) => {
   const [tabAtiva, setTabAtiva] = useState<'P_VALIDAR' | 'CONFIRMADOS'>('P_VALIDAR');
+  const [mesFiltro, setMesFiltro] = useState<string>('todos');
   const [setorFiltro, setSetorFiltro] = useState<string>('Fire');
   const [buscaTexto, setBuscaTexto] = useState<string>('');
   const [setoresDisponiveis, setSetoresDisponiveis] = useState<string[]>([
@@ -120,13 +139,59 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
     return anoSelecionado;
   };
 
-  // 1. Filtragem por Ano Selecionado
+  // Extrai o mês de um relatório (1 a 12)
+  const extrairMesLancamento = (item: LancamentoTesouraria): number => {
+    if (item.mes && typeof item.mes === 'number' && item.mes >= 1 && item.mes <= 12) {
+      return item.mes;
+    }
+    const rawMes = (item as any).MES ?? (item as any).Mes ?? (item as any).mes;
+    if (rawMes !== undefined && rawMes !== null && !isNaN(Number(rawMes))) {
+      const num = Number(rawMes);
+      if (num >= 1 && num <= 12) return num;
+    }
+    const dataBR = item.dataBR || (item as any).DataNascimento;
+    if (dataBR && typeof dataBR === 'string' && dataBR.includes('/')) {
+      const parts = dataBR.trim().split('/');
+      if (parts.length === 3) {
+        const m = parseInt(parts[1], 10);
+        if (!isNaN(m) && m >= 1 && m <= 12) return m;
+      }
+    }
+    const dataStr = item.data || item.DataCelula || (item as any).dataCelula || '';
+    if (dataStr && typeof dataStr === 'string') {
+      if (dataStr.includes('/')) {
+        const parts = dataStr.trim().split('/');
+        if (parts.length === 3) {
+          const m = parseInt(parts[1], 10);
+          if (!isNaN(m) && m >= 1 && m <= 12) return m;
+        }
+      }
+      if (dataStr.includes('-')) {
+        const parts = dataStr.split('-');
+        if (parts.length >= 2) {
+          const m = parseInt(parts[1], 10);
+          if (!isNaN(m) && m >= 1 && m <= 12) return m;
+        }
+      }
+    }
+    return 0;
+  };
+
+  // 1. Filtragem por Ano e Mês Selecionados
   const lancamentosDoAno = useMemo(() => {
     return lancamentos.filter(item => {
       const anoItem = extrairAnoLancamento(item);
-      return anoItem === anoSelecionado;
+      if (anoItem !== anoSelecionado) return false;
+
+      // Se mês específico selecionado (diferente de 'todos'), filtra pelo mês
+      if (mesFiltro !== 'todos') {
+        const mesItem = extrairMesLancamento(item);
+        if (mesItem !== Number(mesFiltro)) return false;
+      }
+
+      return true;
     });
-  }, [lancamentos, anoSelecionado]);
+  }, [lancamentos, anoSelecionado, mesFiltro]);
 
   // Lista unificada de todos os setores distintos
   const listaSetores = useMemo(() => {
@@ -425,20 +490,49 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
 
       {/* Barra Superior de Controles e Filtros */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#2d334d] pb-3">
-        <div className="flex items-center flex-wrap gap-3">
-          <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-            <FileCheck className="w-5 h-5 text-indigo-400" />
-            <span>Validar Relatórios</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-500/30 font-semibold font-mono">
-              Ano {anoSelecionado}
-            </span>
-          </h2>
+        <div className="flex items-center flex-wrap gap-2.5">
+          {/* Seletor de Ano */}
+          <div className="flex items-center gap-1.5 bg-[#20263c] px-2.5 py-1.5 rounded-lg border border-[#313956] text-xs shadow-sm">
+            <label htmlFor="select-ano-validar" className="text-slate-300 font-medium select-none">
+              Ano:
+            </label>
+            <select
+              id="select-ano-validar"
+              value={anoSelecionado}
+              onChange={(e) => onSelectAno && onSelectAno(Number(e.target.value))}
+              className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+            >
+              <option value={2026} className="bg-[#1c2030] text-white">2026</option>
+              <option value={2025} className="bg-[#1c2030] text-white">2025</option>
+              <option value={2024} className="bg-[#1c2030] text-white">2024</option>
+              <option value={2023} className="bg-[#1c2030] text-white">2023</option>
+            </select>
+          </div>
 
-          {/* Usuário Tesoureiro Ativo (Exibe somente o nome do Tesoureiro) */}
-          <div className="flex items-center gap-2 bg-[#20263c] px-3 py-1 rounded-lg border border-[#313956] text-xs">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-slate-300">Tesoureiro:</span>
-            <strong className="text-white">{usuarioLogado?.nome || 'Junio Fonteles'}</strong>
+          {/* Seletor de Mês (com opção 'Todos os Meses' padrão) */}
+          <div className="flex items-center gap-1.5 bg-[#20263c] px-2.5 py-1.5 rounded-lg border border-[#313956] text-xs shadow-sm">
+            <label htmlFor="select-mes-validar" className="text-slate-300 font-medium select-none">
+              Mês:
+            </label>
+            <select
+              id="select-mes-validar"
+              value={mesFiltro}
+              onChange={(e) => {
+                setMesFiltro(e.target.value);
+                setSelecionados(new Set());
+              }}
+              className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+            >
+              {MESES_OPCOES.map(m => (
+                <option 
+                  key={m.valor} 
+                  value={m.valor} 
+                  className={`bg-[#1c2030] text-white ${m.valor === 'todos' ? 'font-bold text-amber-300' : ''}`}
+                >
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 

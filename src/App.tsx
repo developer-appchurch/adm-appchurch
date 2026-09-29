@@ -267,6 +267,7 @@ export default function App() {
             <ValidarRelatoriosView
               lancamentos={lancamentos}
               anoSelecionado={anoSelecionado}
+              onSelectAno={setAnoSelecionado}
               usuarioLogado={usuarioLogado}
               onAtualizarLancamento={handleAtualizarLancamento}
               onConfirmarLancamento={handleConfirmarLancamento}
