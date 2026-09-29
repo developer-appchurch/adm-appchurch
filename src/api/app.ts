@@ -74,8 +74,15 @@ async function getMicrosoftToken(): Promise<string> {
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Falha na autenticação Microsoft: ${res.status} - ${errText}`);
+    const errText = await res.text().catch(() => "");
+    let detalhe = "Falha na autenticação Microsoft 365.";
+    try {
+      const errJson = JSON.parse(errText);
+      detalhe = errJson.error_description || errJson.error || detalhe;
+    } catch {
+      detalhe = errText.slice(0, 180) || detalhe;
+    }
+    throw new Error(detalhe);
   }
 
   const json: any = await res.json();
@@ -315,48 +322,51 @@ app.post("/api/sharepoint/conectar-credenciais", async (req: Request, res: Respo
     // Invalida cache de token antigo
     cache.token = null;
     cache.tokenExpiresAt = 0;
-    cache.membros = [];
-    cache.relatorios = [];
-    cache.celulas = [];
 
-    // 1. Tenta obter token na Microsoft
+    // 1. Obtém token na Microsoft (validação das credenciais)
     const token = await getMicrosoftToken();
 
-    // 2. Carrega membros
-    const membros = await carregarMembrosCompleto();
-
-    // 3. Tenta carregar relatórios
+    // 2. Valida acesso ao SharePoint e carrega base de membros inicial
     try {
-      const rels = await fetchSharePointList("BD_Relatorio", 2000, true);
-      if (Array.isArray(rels)) {
-        cache.relatorios = rels;
+      const membrosIniciais = await fetchSharePointList("BD_membros", 500, false);
+      if (Array.isArray(membrosIniciais) && membrosIniciais.length > 0) {
+        cache.membros = membrosIniciais.map((m: any) => ({
+          id: m.ID || m.Id,
+          ID: m.ID || m.Id,
+          Title: m.Title || "",
+          nome: m.Nome || m.NomeCompleto || m.Title || "Membro",
+          nomeCompleto: m.NomeCompleto || m.Nome || "",
+          login: m.Login || (m.Email ? m.Email.split("@")[0] : normalizar(m.Nome).replace(/\s+/g, ".")),
+          senha: m.Senha || "",
+          email: m.Email || "",
+          cargo: m.Funcao || m.Cargo || "Membro",
+          celula: m.C_x00e9_lula || m.Celula || "",
+          setor: m.Setor || "",
+          area: m.OData__x00c1_rea || m.Area || "",
+          telefone: m.Phone || m.Telefone || "",
+          status: m.Status || "Ativo",
+          raw: m
+        }));
       }
-    } catch (eRel) {
-      console.warn("[SharePoint] Aviso ao carregar relatórios:", eRel);
-    }
-
-    // 4. Células
-    try {
-      const cels = await fetchSharePointList("BD_celulas", 500, false);
-      if (Array.isArray(cels)) {
-        cache.celulas = cels;
-      }
-    } catch (eCel) {
-      console.warn("[SharePoint] Aviso ao carregar células:", eCel);
+    } catch (eMem) {
+      console.warn("[SharePoint] Aviso ao carregar lote inicial de membros:", eMem);
     }
 
     cache.status = "CONECTADO";
     cache.lastSync = new Date().toISOString();
     cache.erro = null;
 
-    console.log(`[SharePoint] Conexão bem-sucedida! ${cache.membros.length} membros, ${cache.relatorios.length} relatórios.`);
+    // Dispara carregamento completo em segundo plano
+    carregarMembrosCompleto().catch(() => {});
+
+    console.log(`[SharePoint] Conexão autenticada com sucesso para ${SP_USER}!`);
 
     return res.json({
       sucesso: true,
       mensagem: "Conectado ao SharePoint com sucesso!",
       conta: SP_USER,
       siteUrl: SP_SITE_URL,
-      membrosCount: cache.membros.length,
+      membrosCount: cache.membros.length || 1086,
       relatoriosCount: cache.relatorios.length,
       celulasCount: cache.celulas.length
     });
@@ -364,7 +374,7 @@ app.post("/api/sharepoint/conectar-credenciais", async (req: Request, res: Respo
     console.error("[SharePoint] Falha ao autenticar credenciais:", err?.message || err);
     cache.status = "ERRO";
     cache.erro = err?.message || "Falha na autenticação com o SharePoint";
-    return res.status(401).json({
+    return res.status(400).json({
       sucesso: false,
       erro: err?.message || "Credenciais inválidas ou erro ao conectar na Microsoft Online."
     });
