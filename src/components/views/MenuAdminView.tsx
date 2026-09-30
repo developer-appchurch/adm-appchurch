@@ -12,7 +12,8 @@ export const MenuAdminView: React.FC<MenuAdminViewProps> = ({ onSelectView, usua
     { id: 'validar-relatorios', label: 'Validar Relatórios' },
     { id: 'relacao-envelopes', label: 'Relação Envelopes' },
     { id: 'dashboard', label: 'DashBoard' },
-    { id: 'fluxo-caixa', label: 'Fluxo de Caixa (Relatórios & SharePoint)', highlight: true },
+    { id: 'indicador-trilho', label: 'Indicador Trilho de Capacitação', highlight: true },
+    { id: 'fluxo-caixa', label: 'Fluxo de Caixa (Relatórios & SharePoint)' },
   ];
 
   return (

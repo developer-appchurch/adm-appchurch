@@ -7,6 +7,7 @@ import { FluxoCaixaView } from './components/views/FluxoCaixaView';
 import { DashboardView } from './components/views/DashboardView';
 import { RelacaoEnvelopesView } from './components/views/RelacaoEnvelopesView';
 import { ValidarRelatoriosView } from './components/views/ValidarRelatoriosView';
+import { IndicadorTrilhoView } from './components/views/IndicadorTrilhoView';
 import { MenuAdminView } from './components/views/MenuAdminView';
 import { LoginView } from './components/views/LoginView';
 import { DiagnosticsView } from './components/views/DiagnosticsView';
@@ -276,6 +277,10 @@ export default function App() {
               onDesconfirmarLancamento={handleDesconfirmarLancamento}
               onRefresh={handleRefresh}
             />
+          )}
+
+          {currentView === 'indicador-trilho' && (
+            <IndicadorTrilhoView />
           )}
 
           {currentView === 'diagnostico' && (

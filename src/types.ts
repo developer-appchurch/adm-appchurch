@@ -3,6 +3,7 @@ export type ViewMode =
   | 'dashboard'
   | 'relacao-envelopes'
   | 'validar-relatorios'
+  | 'indicador-trilho'
   | 'menu-admin'
   | 'diagnostico'
   | 'login';
@@ -172,3 +173,47 @@ export interface FiltrosFluxoCaixa {
 }
 
 export type VisualizacaoAgrupamento = 'periodo' | 'setor' | 'area' | 'mensal' | 'anual' | 'categoria' | 'tabela-total';
+
+export interface EtapaStats {
+  etapa: string;
+  concluidos: number;
+  pendentes: number;
+  percentual: number;
+}
+
+export interface MetricasTrilhoConjunto {
+  totalMembros: number;
+  percentualMedio: number;
+  membrosCompletos: number;
+  membrosEmAndamento: number;
+  membrosNaoIniciados: number;
+  etapasStats: EtapaStats[];
+}
+
+export interface MembroTrilhoItem {
+  id: string | number;
+  nome: string;
+  login: string;
+  setor: string;
+  area: string;
+  cargo: string;
+  celula: string;
+  etapasConcluidas: string[];
+  totalConcluidas: number;
+  totalEtapas: number;
+  percentualConclusao: number;
+  statusTrilho: 'Completo' | 'Em Andamento' | 'Não Iniciado';
+}
+
+export interface IndicadorTrilhoResponse {
+  sucesso: boolean;
+  totalMembrosGeral: number;
+  totalCapacitacoesRegistros: number;
+  etapas: string[];
+  areasDisponiveis: string[];
+  setoresDisponiveis: string[];
+  geral: MetricasTrilhoConjunto;
+  porArea: Record<string, MetricasTrilhoConjunto>;
+  porSetor: Record<string, MetricasTrilhoConjunto>;
+  membros: MembroTrilhoItem[];
+}

@@ -18,7 +18,10 @@ import {
   ChevronUp,
   Cpu,
   KeyRound,
-  ExternalLink
+  ExternalLink,
+  Zap,
+  Trash2,
+  HardDrive
 } from 'lucide-react';
 import { SharePointService } from '../../services/sharepointService';
 
@@ -57,9 +60,39 @@ interface DiagnosticResponse {
   totalDurationMs: number;
 }
 
+interface CacheStatusResponse {
+  sucesso: boolean;
+  cache: {
+    statusGeral: string;
+    ultimoSync: string | null;
+    tokenValido: boolean;
+    tokenExpiraEmSegundos: number;
+    metricas: {
+      hits: number;
+      staleHits: number;
+      misses: number;
+      backgroundRevalidations: number;
+      lastRevalidationAt: string | null;
+    };
+    revalidacoesAtivas: string[];
+    listas: {
+      membros: { carregado: boolean; total: number; idadeTexto: string | null; isStale: boolean };
+      relatorios: { carregado: boolean; total: number; idadeTexto: string | null; isStale: boolean };
+      celulas: { carregado: boolean; total: number; idadeTexto: string | null; isStale: boolean };
+    };
+    configuracoes: {
+      freshTtlMinutos: number;
+      staleTtlHoras: number;
+      caminhoCacheDisco: string;
+    };
+  };
+}
+
 export const DiagnosticsView: React.FC = () => {
   const [data, setData] = useState<DiagnosticResponse | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<CacheStatusResponse['cache'] | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const [cacheActionLoading, setCacheActionLoading] = useState<boolean>(false);
   const [copiado, setCopiado] = useState<boolean>(false);
   const [expandedCheck, setExpandedCheck] = useState<string | null>(null);
 
@@ -69,12 +102,39 @@ export const DiagnosticsView: React.FC = () => {
   const [testResultado, setTestResultado] = useState<any>(null);
   const [testLoading, setTestLoading] = useState<boolean>(false);
 
+  const carregarStatusCache = async () => {
+    try {
+      const res = await fetch('/api/sharepoint/cache/status');
+      if (res.ok) {
+        const json: CacheStatusResponse = await res.json();
+        if (json.sucesso) {
+          setCacheInfo(json.cache);
+        }
+      }
+    } catch {}
+  };
+
   const executarDiagnostico = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/sharepoint/diagnostics');
-      const json = await res.json();
-      setData(json);
+      const [diagRes] = await Promise.all([
+        fetch('/api/sharepoint/diagnostics'),
+        carregarStatusCache()
+      ]);
+
+      const rawText = await diagRes.text();
+      let json: DiagnosticResponse | null = null;
+      try {
+        json = JSON.parse(rawText);
+      } catch {
+        throw new Error(`Resposta não é JSON (HTTP ${diagRes.status}): ${rawText.slice(0, 150)}`);
+      }
+
+      if (json) {
+        setData(json);
+      } else {
+        throw new Error(`Resposta vazia da API (HTTP ${diagRes.status})`);
+      }
     } catch (err: any) {
       console.error('[DiagnosticsView] Erro ao obter diagnóstico:', err);
       setData({
@@ -116,13 +176,43 @@ export const DiagnosticsView: React.FC = () => {
     executarDiagnostico();
   }, []);
 
+  const forcarRevalidacaoCache = async () => {
+    setCacheActionLoading(true);
+    try {
+      await fetch('/api/sharepoint/cache/refresh', { method: 'POST' });
+      await carregarStatusCache();
+      await executarDiagnostico();
+    } finally {
+      setCacheActionLoading(false);
+    }
+  };
+
+  const limparCachePersistente = async () => {
+    if (!window.confirm('Tem certeza que deseja limpar todo o cache persistente de listas e token?')) return;
+    setCacheActionLoading(true);
+    try {
+      await fetch('/api/sharepoint/cache/clear', { method: 'POST' });
+      await carregarStatusCache();
+      await executarDiagnostico();
+    } finally {
+      setCacheActionLoading(false);
+    }
+  };
+
   const copiarRelatorio = () => {
     if (!data) return;
-    const relatorio = `### RELATÓRIO DE DIAGNÓSTICO SHAREPOINT (${new Date(data.timestamp).toLocaleString('pt-BR')})
+    const relatorio = `### RELATÓRIO DE DIAGNÓSTICO & CACHE SHAREPOINT (${new Date(data.timestamp).toLocaleString('pt-BR')})
 **Ambiente:** ${data.environment.runtime} (${data.environment.vercelRegion})
 **Status Geral:** ${data.overallStatus} (${data.totalDurationMs}ms)
 **Conta:** ${data.environment.sharepointUserMasked}
 **Site URL:** ${data.environment.siteUrl}
+
+#### ESTATÍSTICAS DE CACHE PERSISTENTE (SWR):
+- Cache Hits (0ms): ${cacheInfo?.metricas?.hits ?? 0}
+- Stale Hits (Revalidação em Background): ${cacheInfo?.metricas?.staleHits ?? 0}
+- Cache Misses (Chamadas Microsoft): ${cacheInfo?.metricas?.misses ?? 0}
+- Revalidações em Background Concluídas: ${cacheInfo?.metricas?.backgroundRevalidations ?? 0}
+- Token Microsoft Válido: ${cacheInfo?.tokenValido ? `Sim (restam ${cacheInfo?.tokenExpiraEmSegundos}s)` : 'Não'}
 
 #### ENDPOINTS VERIFICADOS:
 ${data.checks.map(c => `- **${c.name}** [${c.status || 'ERR'}]: ${c.success ? '✅ SUCESSO' : '❌ FALHA'} (${c.durationMs}ms)
@@ -165,7 +255,7 @@ ${data.checks.map(c => `- **${c.name}** [${c.status || 'ERR'}]: ${c.success ? '�
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-                <span>Diagnóstico & Logs da API</span>
+                <span>Diagnóstico & Cache Persistente (SWR)</span>
                 {data && (
                   <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
                     data.overallStatus === 'SUCCESS'
@@ -179,7 +269,7 @@ ${data.checks.map(c => `- **${c.name}** [${c.status || 'ERR'}]: ${c.success ? '�
                 )}
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Verificação endpoint por endpoint entre ambiente local e Vercel Serverless
+                Stale-While-Revalidate e persistência global para minimizar chamadas à API da Microsoft
               </p>
             </div>
           </div>
@@ -206,6 +296,130 @@ ${data.checks.map(c => `- **${c.name}** [${c.status || 'ERR'}]: ${c.success ? '�
           </button>
         </div>
       </div>
+
+      {/* Painel Especial de Cache Persistente & SWR */}
+      {cacheInfo && (
+        <div className="bg-[#141724] border border-[#2c334f] rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#252b42] pb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
+                <Zap className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  Sistema de Cache Persistente • Stale-While-Revalidate (SWR)
+                </h2>
+                <p className="text-[11px] text-slate-400">
+                  Cache global em memória + disco (/tmp) com revalidação assíncrona automática
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={forcarRevalidacaoCache}
+                disabled={cacheActionLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                title="Força uma nova leitura completa no SharePoint"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${cacheActionLoading ? 'animate-spin' : ''}`} />
+                <span>Revalidar Cache (SWR)</span>
+              </button>
+
+              <button
+                onClick={limparCachePersistente}
+                disabled={cacheActionLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-500/30 text-red-200 text-xs font-semibold transition-all cursor-pointer disabled:opacity-50"
+                title="Limpa cache de memória e arquivos /tmp"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Limpar Cache</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-[#191d2e] p-3 rounded-xl border border-[#2b324d]">
+              <span className="text-[11px] text-slate-400 font-medium block">Cache Hits (0ms)</span>
+              <span className="text-lg font-bold text-emerald-400 font-mono">
+                {cacheInfo.metricas.hits}
+              </span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">Servido direto da memória</span>
+            </div>
+
+            <div className="bg-[#191d2e] p-3 rounded-xl border border-[#2b324d]">
+              <span className="text-[11px] text-slate-400 font-medium block">Stale Hits (SWR)</span>
+              <span className="text-lg font-bold text-amber-400 font-mono">
+                {cacheInfo.metricas.staleHits}
+              </span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">Instantâneo + sync background</span>
+            </div>
+
+            <div className="bg-[#191d2e] p-3 rounded-xl border border-[#2b324d]">
+              <span className="text-[11px] text-slate-400 font-medium block">Chamadas à Microsoft</span>
+              <span className="text-lg font-bold text-indigo-400 font-mono">
+                {cacheInfo.metricas.misses}
+              </span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">Cache Misses / Cold starts</span>
+            </div>
+
+            <div className="bg-[#191d2e] p-3 rounded-xl border border-[#2b324d]">
+              <span className="text-[11px] text-slate-400 font-medium block">Token Microsoft</span>
+              <span className="text-lg font-bold text-purple-300 font-mono">
+                {cacheInfo.tokenValido ? `${cacheInfo.tokenExpiraEmSegundos}s` : 'Expirado'}
+              </span>
+              <span className="text-[10px] text-slate-500 block mt-0.5">
+                {cacheInfo.tokenValido ? 'Reutilizando token ativo' : 'Pronto para renovar'}
+              </span>
+            </div>
+          </div>
+
+          {/* Status das listas cacheadas */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+            <div className="bg-[#10121d] p-3 rounded-xl border border-[#23283e] flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-white block">BD_membros</span>
+                <span className="text-[11px] text-slate-400">
+                  {cacheInfo.listas.membros.total} membros • {cacheInfo.listas.membros.idadeTexto || 'agora'}
+                </span>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                !cacheInfo.listas.membros.isStale ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-amber-950 text-amber-300 border border-amber-500/30'
+              }`}>
+                {!cacheInfo.listas.membros.isStale ? 'Fresco' : 'Stale (SWR)'}
+              </span>
+            </div>
+
+            <div className="bg-[#10121d] p-3 rounded-xl border border-[#23283e] flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-white block">BD_Relatorio</span>
+                <span className="text-[11px] text-slate-400">
+                  {cacheInfo.listas.relatorios.total} relatórios • {cacheInfo.listas.relatorios.idadeTexto || 'agora'}
+                </span>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                !cacheInfo.listas.relatorios.isStale ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-amber-950 text-amber-300 border border-amber-500/30'
+              }`}>
+                {!cacheInfo.listas.relatorios.isStale ? 'Fresco' : 'Stale (SWR)'}
+              </span>
+            </div>
+
+            <div className="bg-[#10121d] p-3 rounded-xl border border-[#23283e] flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-white block">BD_celulas</span>
+                <span className="text-[11px] text-slate-400">
+                  {cacheInfo.listas.celulas.total} células • {cacheInfo.listas.celulas.idadeTexto || 'agora'}
+                </span>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                !cacheInfo.listas.celulas.isStale ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/30' : 'bg-amber-950 text-amber-300 border border-amber-500/30'
+              }`}>
+                {!cacheInfo.listas.celulas.isStale ? 'Fresco' : 'Stale (SWR)'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Cards de Ambiente e Comparativo Vercel vs Local */}
       {data && (

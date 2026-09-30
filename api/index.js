@@ -1,11 +1,316 @@
-import express, { Request, Response } from "express";
-import { PersistentCacheManager, FRESH_TTL_MS, STALE_TTL_MS } from "./cacheManager";
+// src/api/app.ts
+import express from "express";
 
-const app = express();
+// src/api/cacheManager.ts
+import fs from "fs";
+import path from "path";
+var FRESH_TTL_MS = 5 * 60 * 1e3;
+var STALE_TTL_MS = 24 * 60 * 60 * 1e3;
+var TOKEN_EXPIRY_BUFFER_MS = 2 * 60 * 1e3;
+var TMP_DIR = process.platform === "win32" ? path.join(process.cwd(), ".tmp") : "/tmp";
+var CACHE_FILE_PATH = path.join(TMP_DIR, "appchurch_sp_cache.json");
+var TOKEN_FILE_PATH = path.join(TMP_DIR, "appchurch_sp_token.json");
+var CREDS_FILE_PATH = path.join(TMP_DIR, "appchurch_sp_credentials.json");
+try {
+  if (!fs.existsSync(TMP_DIR)) {
+    fs.mkdirSync(TMP_DIR, { recursive: true });
+  }
+} catch {
+}
+function inicializarStore() {
+  if (globalThis.__SP_GLOBAL_STORE__) {
+    return globalThis.__SP_GLOBAL_STORE__;
+  }
+  let storeRestaurada = null;
+  try {
+    if (fs.existsSync(CACHE_FILE_PATH)) {
+      const conteudo = fs.readFileSync(CACHE_FILE_PATH, "utf-8");
+      storeRestaurada = JSON.parse(conteudo);
+      console.log("[CacheManager] \u2705 Cache persistente restaurado com sucesso de /tmp!");
+    }
+  } catch (e) {
+    console.warn("[CacheManager] Aviso ao ler cache persistente de /tmp:", e);
+  }
+  const novaStore = {
+    token: storeRestaurada?.token || null,
+    membros: storeRestaurada?.membros || null,
+    relatorios: storeRestaurada?.relatorios || null,
+    celulas: storeRestaurada?.celulas || null,
+    capacitacoes: storeRestaurada?.capacitacoes || null,
+    membrosCapac: storeRestaurada?.membrosCapac || null,
+    status: storeRestaurada?.status || "CONECTADO",
+    erro: null,
+    lastSync: storeRestaurada?.lastSync || null,
+    metrics: storeRestaurada?.metrics || {
+      hits: 0,
+      staleHits: 0,
+      misses: 0,
+      backgroundRevalidations: 0,
+      lastRevalidationAt: null
+    }
+  };
+  globalThis.__SP_GLOBAL_STORE__ = novaStore;
+  return novaStore;
+}
+var PersistentCacheManager = class {
+  static {
+    this.revalidacoesEmAndamento = /* @__PURE__ */ new Map();
+  }
+  static getStore() {
+    return inicializarStore();
+  }
+  /**
+   * Salva o estado atual do cache em /tmp para persistência entre invocações frias/quentes
+   */
+  static async salvarEmDisco() {
+    try {
+      const store = this.getStore();
+      const payload = JSON.stringify({
+        token: store.token,
+        membros: store.membros,
+        relatorios: store.relatorios,
+        celulas: store.celulas,
+        capacitacoes: store.capacitacoes,
+        membrosCapac: store.membrosCapac,
+        status: store.status,
+        lastSync: store.lastSync,
+        metrics: store.metrics
+      });
+      await fs.promises.writeFile(CACHE_FILE_PATH, payload, "utf-8");
+    } catch (err) {
+      console.warn("[CacheManager] N\xE3o foi poss\xEDvel persistir cache em disco (/tmp):", err);
+    }
+  }
+  /**
+   * Obtém token Microsoft do cache (em memória ou /tmp)
+   */
+  static getMicrosoftToken() {
+    const store = this.getStore();
+    const now = Date.now();
+    if (store.token && store.token.expiresAt > now + TOKEN_EXPIRY_BUFFER_MS) {
+      return store.token.access_token;
+    }
+    try {
+      if (fs.existsSync(TOKEN_FILE_PATH)) {
+        const raw = fs.readFileSync(TOKEN_FILE_PATH, "utf-8");
+        const tokenObj = JSON.parse(raw);
+        if (tokenObj && tokenObj.access_token && tokenObj.expiresAt > now + TOKEN_EXPIRY_BUFFER_MS) {
+          store.token = tokenObj;
+          return tokenObj.access_token;
+        }
+      }
+    } catch {
+    }
+    return null;
+  }
+  /**
+   * Salva o token Microsoft no cache global e em /tmp
+   */
+  static async setMicrosoftToken(token, expiresInSeconds) {
+    const store = this.getStore();
+    const expiresAt = Date.now() + Number(expiresInSeconds || 3600) * 1e3;
+    const tokenObj = { access_token: token, expiresAt };
+    store.token = tokenObj;
+    try {
+      await fs.promises.writeFile(TOKEN_FILE_PATH, JSON.stringify(tokenObj), "utf-8");
+    } catch {
+    }
+  }
+  /**
+   * Obtém credenciais Microsoft salvas no disco (/tmp) para persistência em ambiente serverless
+   */
+  static getSavedCredentials() {
+    try {
+      if (fs.existsSync(CREDS_FILE_PATH)) {
+        const raw = fs.readFileSync(CREDS_FILE_PATH, "utf-8");
+        const creds = JSON.parse(raw);
+        if (creds && creds.user && creds.pass) {
+          return creds;
+        }
+      }
+    } catch {
+    }
+    return null;
+  }
+  /**
+   * Salva credenciais customizadas Microsoft no disco (/tmp)
+   */
+  static async saveCredentials(creds) {
+    try {
+      await fs.promises.writeFile(CREDS_FILE_PATH, JSON.stringify(creds), "utf-8");
+    } catch (e) {
+      console.warn("[CacheManager] Erro ao persistir credenciais em /tmp:", e);
+    }
+  }
+  /**
+   * Executa a estratégia Stale-While-Revalidate para listas do SharePoint
+   */
+  static async getWithSWR(chave, revalidador, options) {
+    const store = this.getStore();
+    const freshTtl = options?.freshTtlMs ?? FRESH_TTL_MS;
+    const staleTtl = options?.staleTtlMs ?? STALE_TTL_MS;
+    const now = Date.now();
+    const entrada = store[chave];
+    if (!options?.forceRefresh && entrada && Array.isArray(entrada.data) && entrada.data.length > 0) {
+      const idade = now - entrada.updatedAt;
+      if (idade < freshTtl) {
+        store.metrics.hits++;
+        return {
+          data: entrada.data,
+          cacheStatus: "HIT",
+          source: "memory",
+          itemCount: entrada.data.length,
+          updatedAt: entrada.updatedAt
+        };
+      }
+      if (idade < staleTtl) {
+        store.metrics.staleHits++;
+        this.dispararRevalidacaoEmBackground(chave, revalidador);
+        return {
+          data: entrada.data,
+          cacheStatus: "STALE",
+          source: "memory",
+          itemCount: entrada.data.length,
+          updatedAt: entrada.updatedAt
+        };
+      }
+    }
+    store.metrics.misses++;
+    console.log(`[CacheManager] \u{1F310} [${chave}] Cache Miss ou For\xE7ado - buscando da API da Microsoft...`);
+    const novosDados = await revalidador();
+    this.atualizarEntrada(chave, novosDados);
+    return {
+      data: novosDados,
+      cacheStatus: "MISS",
+      source: "network",
+      itemCount: novosDados.length,
+      updatedAt: Date.now()
+    };
+  }
+  /**
+   * Dispara a busca em background sem travar a resposta HTTP do usuário
+   */
+  static dispararRevalidacaoEmBackground(chave, revalidador) {
+    if (this.revalidacoesEmAndamento.has(chave)) {
+      return;
+    }
+    console.log(`[CacheManager] \u{1F504} [${chave}] SWR: Iniciando revalida\xE7\xE3o ass\xEDncrona em background...`);
+    const store = this.getStore();
+    store.metrics.backgroundRevalidations++;
+    const promessa = (async () => {
+      try {
+        const novosDados = await revalidador();
+        if (Array.isArray(novosDados) && novosDados.length > 0) {
+          this.atualizarEntrada(chave, novosDados);
+          store.metrics.lastRevalidationAt = (/* @__PURE__ */ new Date()).toISOString();
+          console.log(`[CacheManager] \u26A1 [${chave}] Revalida\xE7\xE3o em background conclu\xEDda com sucesso! (${novosDados.length} itens)`);
+        }
+      } catch (err) {
+        console.warn(`[CacheManager] \u26A0\uFE0F [${chave}] Aviso na revalida\xE7\xE3o em background:`, err);
+      } finally {
+        this.revalidacoesEmAndamento.delete(chave);
+      }
+    })();
+    this.revalidacoesEmAndamento.set(chave, promessa);
+  }
+  /**
+   * Atualiza a entrada de cache e salva em disco
+   */
+  static atualizarEntrada(chave, dados) {
+    const store = this.getStore();
+    store[chave] = {
+      data: dados,
+      updatedAt: Date.now(),
+      itemCount: dados.length
+    };
+    store.lastSync = (/* @__PURE__ */ new Date()).toISOString();
+    store.status = "CONECTADO";
+    store.erro = null;
+    this.salvarEmDisco().catch(() => {
+    });
+  }
+  /**
+   * Limpa todo o cache
+   */
+  static limparCache() {
+    const store = this.getStore();
+    store.token = null;
+    store.membros = null;
+    store.relatorios = null;
+    store.celulas = null;
+    store.capacitacoes = null;
+    store.membrosCapac = null;
+    store.lastSync = null;
+    try {
+      if (fs.existsSync(CACHE_FILE_PATH)) fs.unlinkSync(CACHE_FILE_PATH);
+      if (fs.existsSync(TOKEN_FILE_PATH)) fs.unlinkSync(TOKEN_FILE_PATH);
+    } catch {
+    }
+  }
+  /**
+   * Retorna estatísticas completas para a tela de diagnóstico e logs
+   */
+  static getEstatisticas() {
+    const store = this.getStore();
+    const now = Date.now();
+    const formatarIdade = (ts) => {
+      if (!ts) return null;
+      const seg = Math.floor((now - ts) / 1e3);
+      if (seg < 60) return `${seg}s atr\xE1s`;
+      const min = Math.floor(seg / 60);
+      return `${min}m ${seg % 60}s atr\xE1s`;
+    };
+    return {
+      statusGeral: store.status,
+      ultimoSync: store.lastSync,
+      tokenValido: !!(store.token && store.token.expiresAt > now),
+      tokenExpiraEmSegundos: store.token ? Math.max(0, Math.floor((store.token.expiresAt - now) / 1e3)) : 0,
+      metricas: store.metrics,
+      revalidacoesAtivas: Array.from(this.revalidacoesEmAndamento.keys()),
+      listas: {
+        membros: {
+          carregado: !!store.membros,
+          total: store.membros?.itemCount ?? 0,
+          idadeTexto: formatarIdade(store.membros?.updatedAt),
+          isStale: store.membros ? now - store.membros.updatedAt > FRESH_TTL_MS : true
+        },
+        relatorios: {
+          carregado: !!store.relatorios,
+          total: store.relatorios?.itemCount ?? 0,
+          idadeTexto: formatarIdade(store.relatorios?.updatedAt),
+          isStale: store.relatorios ? now - store.relatorios.updatedAt > FRESH_TTL_MS : true
+        },
+        celulas: {
+          carregado: !!store.celulas,
+          total: store.celulas?.itemCount ?? 0,
+          idadeTexto: formatarIdade(store.celulas?.updatedAt),
+          isStale: store.celulas ? now - store.celulas.updatedAt > FRESH_TTL_MS : true
+        },
+        capacitacoes: {
+          carregado: !!store.capacitacoes,
+          total: store.capacitacoes?.itemCount ?? 0,
+          idadeTexto: formatarIdade(store.capacitacoes?.updatedAt),
+          isStale: store.capacitacoes ? now - store.capacitacoes.updatedAt > FRESH_TTL_MS : true
+        },
+        membrosCapac: {
+          carregado: !!store.membrosCapac,
+          total: store.membrosCapac?.itemCount ?? 0,
+          idadeTexto: formatarIdade(store.membrosCapac?.updatedAt),
+          isStale: store.membrosCapac ? now - store.membrosCapac.updatedAt > FRESH_TTL_MS : true
+        }
+      },
+      configuracoes: {
+        freshTtlMinutos: FRESH_TTL_MS / 6e4,
+        staleTtlHoras: STALE_TTL_MS / 36e5,
+        caminhoCacheDisco: CACHE_FILE_PATH
+      }
+    };
+  }
+};
 
+// src/api/app.ts
+var app = express();
 app.use(express.json());
-
-// Enable CORS for all environments (including Vercel previews)
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -15,40 +320,30 @@ app.use((req, res, next) => {
   }
   next();
 });
-
-// SharePoint Microsoft 365 Config - Inicializa com variáveis de ambiente ou credenciais persistidas em /tmp
-const savedCreds = PersistentCacheManager.getSavedCredentials();
-let SP_USER = process.env.SHAREPOINT_USER || savedCreds?.user || "midia.sobral@paz.church";
-let SP_PASS = process.env.SHAREPOINT_PASS || savedCreds?.pass || "Pazsobral23";
-
-function sanitizeSharePointSiteUrl(rawUrl?: string): string {
+var savedCreds = PersistentCacheManager.getSavedCredentials();
+var SP_USER = process.env.SHAREPOINT_USER || savedCreds?.user || "midia.sobral@paz.church";
+var SP_PASS = process.env.SHAREPOINT_PASS || savedCreds?.pass || "Pazsobral23";
+function sanitizeSharePointSiteUrl(rawUrl) {
   let url = String(rawUrl || "https://pazchurch.sharepoint.com/sites/PazSobral").trim();
   url = url.replace(/\/Lists\/?$/i, "");
   url = url.replace(/\/+$/, "");
   return url || "https://pazchurch.sharepoint.com/sites/PazSobral";
 }
-
-let SP_SITE_URL = sanitizeSharePointSiteUrl(process.env.SHAREPOINT_SITE_URL || savedCreds?.siteUrl || "https://pazchurch.sharepoint.com/sites/PazSobral");
-let SP_RESOURCE = "https://pazchurch.sharepoint.com";
-let MS_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || savedCreds?.clientId || "d3590ed6-52b3-4102-aeff-aad2292ab01c"; // Microsoft Office Public Client
-
-// Middleware para normalização de rotas em ambientes Serverless (Vercel) e proxies
-app.use((req: Request, res: Response, next: any) => {
-  // Se o Vercel reescreveu a URL interna para /api/index ou similar, recupera a URL original
+var SP_SITE_URL = sanitizeSharePointSiteUrl(process.env.SHAREPOINT_SITE_URL || savedCreds?.siteUrl || "https://pazchurch.sharepoint.com/sites/PazSobral");
+var SP_RESOURCE = "https://pazchurch.sharepoint.com";
+var MS_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || savedCreds?.clientId || "d3590ed6-52b3-4102-aeff-aad2292ab01c";
+app.use((req, res, next) => {
   const matchedPath = req.headers["x-matched-path"] || req.headers["x-forwarded-url"] || req.headers["x-now-route-matches"];
   if (typeof matchedPath === "string" && (req.url === "/api" || req.url.startsWith("/api/index") || req.url === "/" || req.url.startsWith("/?"))) {
     req.url = matchedPath;
   }
-  // Se a requisição chega sem o prefixo /api (ex: /sharepoint/diagnostics)
   if (req.url.startsWith("/sharepoint/")) {
     req.url = "/api" + req.url;
   }
   next();
 });
-
-// Cache proxy de compatibilidade para código legado
-const cache = new Proxy({} as any, {
-  get(target, prop: string) {
+var cache = new Proxy({}, {
+  get(target, prop) {
     const store = PersistentCacheManager.getStore();
     if (prop === "token") return store.token?.access_token || null;
     if (prop === "tokenExpiresAt") return store.token?.expiresAt || 0;
@@ -60,9 +355,9 @@ const cache = new Proxy({} as any, {
     if (prop === "status") return store.status;
     if (prop === "erro") return store.erro;
     if (prop === "lastSync") return store.lastSync;
-    return (store as any)[prop];
+    return store[prop];
   },
-  set(target, prop: string, value: any) {
+  set(target, prop, value) {
     const store = PersistentCacheManager.getStore();
     if (prop === "membros") {
       PersistentCacheManager.atualizarEntrada("membros", value);
@@ -84,20 +379,16 @@ const cache = new Proxy({} as any, {
       PersistentCacheManager.atualizarEntrada("membrosCapac", value);
       return true;
     }
-    (store as any)[prop] = value;
+    store[prop] = value;
     return true;
   }
 });
-
-// Obter token OAuth da Microsoft para SharePoint (com cache persistente)
-async function getMicrosoftToken(): Promise<string> {
-  // 1. Tenta obter do cache persistente
+async function getMicrosoftToken() {
   const cachedToken = PersistentCacheManager.getMicrosoftToken();
   if (cachedToken) {
     return cachedToken;
   }
-
-  console.log("[Microsoft OAuth2] Token não encontrado no cache ou expirado. Solicitando novo token...");
+  console.log("[Microsoft OAuth2] Token n\xE3o encontrado no cache ou expirado. Solicitando novo token...");
   const params = new URLSearchParams({
     grant_type: "password",
     client_id: MS_CLIENT_ID,
@@ -105,16 +396,14 @@ async function getMicrosoftToken(): Promise<string> {
     password: SP_PASS,
     resource: SP_RESOURCE
   });
-
   const res = await fetch("https://login.microsoftonline.com/organizations/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString()
   });
-
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    let detalhe = "Falha na autenticação Microsoft 365.";
+    let detalhe = "Falha na autentica\xE7\xE3o Microsoft 365.";
     try {
       const errJson = JSON.parse(errText);
       detalhe = errJson.error_description || errJson.error || detalhe;
@@ -123,67 +412,47 @@ async function getMicrosoftToken(): Promise<string> {
     }
     throw new Error(detalhe);
   }
-
-  const json: any = await res.json();
+  const json = await res.json();
   const token = json.access_token;
   const expiresIn = Number(json.expires_in || 3600);
-
-  // 2. Persiste no cache global e em /tmp
   await PersistentCacheManager.setMicrosoftToken(token, expiresIn);
   return token;
 }
-
-// GUIDs canônicos das listas do SharePoint
-const KNOWN_LIST_GUIDS: Record<string, string> = {
+var KNOWN_LIST_GUIDS = {
   "BD_membros": "0f0da17f-880f-4391-9521-1e41636cfecc",
   "BD_Relatorio": "82228774-77ec-4574-9b57-19272c6910af",
   "BD_celulas": "dfa7d45a-9023-4c35-a7f3-1c976360ffe0",
   "BD_PerfilPermissao": "4bafa1ae-bb82-4084-9aff-dd8ec5a6a8ab",
   "BD_Bairros": "bd3a1a3f-b775-421d-8269-1d7acdcacfba"
 };
-
-async function getSharePointListUrl(listTitle: string, token: string, orderByIdDesc: boolean = false): Promise<string> {
+async function getSharePointListUrl(listTitle, token, orderByIdDesc = false) {
   const orderParam = orderByIdDesc ? "&$orderby=Id%20desc" : "";
   const guid = KNOWN_LIST_GUIDS[listTitle];
-
   if (guid) {
     return `${SP_SITE_URL}/_api/web/lists(guid'${guid}')/items?$top=5000${orderParam}`;
   }
-
   return `${SP_SITE_URL}/_api/web/lists/getbytitle('${listTitle}')/items?$top=5000${orderParam}`;
 }
-
-async function fetchSharePointList(
-  listTitle: string, 
-  maxItems: number = 10000, 
-  orderByIdDesc: boolean = false,
-  maxDurationMs: number = 6000
-): Promise<any[]> {
+async function fetchSharePointList(listTitle, maxItems = 1e4, orderByIdDesc = false, maxDurationMs = 6e3) {
   const token = await getMicrosoftToken();
-  let items: any[] = [];
+  let items = [];
   const startTime = Date.now();
-  
-  let nextUrl: string | null = await getSharePointListUrl(listTitle, token, orderByIdDesc);
+  let nextUrl = await getSharePointListUrl(listTitle, token, orderByIdDesc);
   let attemptFallback = true;
-  
   while (nextUrl && items.length < maxItems) {
-    // Evita timeout da Vercel (limite de 10s) parando a paginação com segurança
     if (Date.now() - startTime > maxDurationMs && items.length > 0) {
       console.log(`[SharePoint] Limite de tempo seguro para Serverless atingido para ${listTitle}: ${items.length} itens coletados.`);
       break;
     }
-
     if (nextUrl.startsWith("/")) {
       nextUrl = `https://pazchurch.sharepoint.com${nextUrl}`;
     }
-
-    const res: any = await fetch(nextUrl, {
+    const res = await fetch(nextUrl, {
       headers: {
         "Authorization": `Bearer ${token}`,
         "Accept": "application/json;odata=verbose"
       }
     });
-
     if (!res.ok) {
       if (res.status === 404 && attemptFallback) {
         attemptFallback = false;
@@ -196,10 +465,9 @@ async function fetchSharePointList(
           });
           if (listsRes.ok) {
             const listsData = await listsRes.json();
-            const allLists: any[] = listsData?.d?.results || [];
-            const found = allLists.find((l: any) => 
-              l.Title?.toLowerCase() === listTitle.toLowerCase() ||
-              l.Title?.toLowerCase().includes(listTitle.toLowerCase())
+            const allLists = listsData?.d?.results || [];
+            const found = allLists.find(
+              (l) => l.Title?.toLowerCase() === listTitle.toLowerCase() || l.Title?.toLowerCase().includes(listTitle.toLowerCase())
             );
             if (found && found.Id) {
               KNOWN_LIST_GUIDS[listTitle] = found.Id;
@@ -212,59 +480,47 @@ async function fetchSharePointList(
           console.warn(`[SharePoint] Aviso na autodescoberta da lista ${listTitle}:`, discoverErr);
         }
       }
-
       const errText = await res.text().catch(() => "");
-      console.warn(`[SharePoint] Consulta à lista ${listTitle} retornou ${res.status}: ${errText.slice(0, 100)}`);
+      console.warn(`[SharePoint] Consulta \xE0 lista ${listTitle} retornou ${res.status}: ${errText.slice(0, 100)}`);
       break;
     }
-
-    const data: any = await res.json().catch(() => null);
+    const data = await res.json().catch(() => null);
     const results = data?.d?.results || data?.value || [];
     items.push(...results);
     nextUrl = data?.d?.__next || null;
   }
   return items;
 }
-
-function normalizar(texto: any): string {
-  return String(texto || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
+function normalizar(texto) {
+  return String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
-
-// Carrega a totalidade dos membros de BD_membros (com suporte a Stale-While-Revalidate)
-async function carregarMembrosCompleto(forceRefresh: boolean = false): Promise<any[]> {
+async function carregarMembrosCompleto(forceRefresh = false) {
   const res = await PersistentCacheManager.getWithSWR(
-    'membros',
+    "membros",
     async () => {
       const token = await getMicrosoftToken();
-      let nextUrl: string | null = `${SP_SITE_URL}/_api/web/lists(guid'0f0da17f-880f-4391-9521-1e41636cfecc')/items?$top=5000`;
-      let rawItems: any[] = [];
-      
+      let nextUrl = `${SP_SITE_URL}/_api/web/lists(guid'0f0da17f-880f-4391-9521-1e41636cfecc')/items?$top=5000`;
+      let rawItems = [];
       while (nextUrl) {
         if (nextUrl.startsWith("/")) {
           nextUrl = `https://pazchurch.sharepoint.com${nextUrl}`;
         }
-        const response: any = await fetch(nextUrl, {
+        const response = await fetch(nextUrl, {
           headers: {
             "Authorization": `Bearer ${token}`,
             "Accept": "application/json;odata=verbose"
           }
         });
         if (!response.ok) break;
-        const data: any = await response.json().catch(() => null);
+        const data = await response.json().catch(() => null);
         const results = data?.d?.results || data?.value || [];
         rawItems.push(...results);
         nextUrl = data?.d?.__next || null;
       }
-
       if (rawItems.length === 0 && cache.membros.length > 0) {
         return cache.membros;
       }
-
-      return rawItems.map((m: any) => ({
+      return rawItems.map((m) => ({
         id: m.ID || m.Id,
         ID: m.ID || m.Id,
         Title: m.Title || "",
@@ -284,167 +540,130 @@ async function carregarMembrosCompleto(forceRefresh: boolean = false): Promise<a
     },
     { forceRefresh }
   );
-
   return res.data;
 }
-
-// Carrega a totalidade de BD_Relatorio (com suporte a Stale-While-Revalidate)
-async function carregarRelatoriosCompleto(forceRefresh: boolean = false): Promise<any[]> {
+async function carregarRelatoriosCompleto(forceRefresh = false) {
   const res = await PersistentCacheManager.getWithSWR(
-    'relatorios',
+    "relatorios",
     async () => {
-      const relatoriosBrutos = await fetchSharePointList("BD_Relatorio", 10000, true);
+      const relatoriosBrutos = await fetchSharePointList("BD_Relatorio", 1e4, true);
       return Array.isArray(relatoriosBrutos) ? relatoriosBrutos : [];
     },
     { forceRefresh }
   );
   return res.data;
 }
-
-// Carrega a totalidade de BD_celulas (com suporte a Stale-While-Revalidate)
-async function carregarCelulasCompleto(forceRefresh: boolean = false): Promise<any[]> {
+async function carregarCelulasCompleto(forceRefresh = false) {
   const res = await PersistentCacheManager.getWithSWR(
-    'celulas',
+    "celulas",
     async () => {
-      const celulasBrutas = await fetchSharePointList("BD_celulas", 1000, false);
+      const celulasBrutas = await fetchSharePointList("BD_celulas", 1e3, false);
       return Array.isArray(celulasBrutas) ? celulasBrutas : [];
     },
     { forceRefresh }
   );
   return res.data;
 }
-
-// Carrega a lista de BD_Capacitacao (com suporte a Stale-While-Revalidate)
-async function carregarCapacitacoesCompleto(forceRefresh: boolean = false): Promise<any[]> {
+async function carregarCapacitacoesCompleto(forceRefresh = false) {
   const res = await PersistentCacheManager.getWithSWR(
-    'capacitacoes',
+    "capacitacoes",
     async () => {
-      const direct = await fetchSharePointList("BD_Capacitacao", 1000, false);
+      const direct = await fetchSharePointList("BD_Capacitacao", 1e3, false);
       return Array.isArray(direct) ? direct : [];
     },
     { forceRefresh }
   );
   return res.data;
 }
-
-// Carrega a lista de BD_MembrosCapac (com suporte a Stale-While-Revalidate)
-async function carregarMembrosCapacCompleto(forceRefresh: boolean = false): Promise<any[]> {
+async function carregarMembrosCapacCompleto(forceRefresh = false) {
   const res = await PersistentCacheManager.getWithSWR(
-    'membrosCapac',
+    "membrosCapac",
     async () => {
-      const direct = await fetchSharePointList("BD_MembrosCapac", 15000, false);
+      const direct = await fetchSharePointList("BD_MembrosCapac", 15e3, false);
       return Array.isArray(direct) ? direct : [];
     },
     { forceRefresh }
   );
   return res.data;
 }
-
-async function sincronizarListasSharePoint(force: boolean = false): Promise<void> {
+async function sincronizarListasSharePoint(force = false) {
   console.log("[SharePoint] Sincronizando listas do SharePoint com SWR...");
   const store = PersistentCacheManager.getStore();
   store.status = "CONECTANDO";
-  let erros: string[] = [];
-
-  // 1. BD_membros (carrega completo)
+  let erros = [];
   try {
     await carregarMembrosCompleto(force);
-  } catch (eMem: any) {
+  } catch (eMem) {
     console.warn("[SharePoint] Erro ao carregar BD_membros:", eMem?.message || eMem);
     erros.push(`BD_membros: ${eMem?.message || eMem}`);
   }
-
-  // 2. BD_Relatorio
   try {
     await carregarRelatoriosCompleto(force);
-  } catch (eRel: any) {
+  } catch (eRel) {
     console.warn("[SharePoint] Erro ao carregar BD_Relatorio:", eRel?.message || eRel);
     erros.push(`BD_Relatorio: ${eRel?.message || eRel}`);
   }
-
-  // 3. BD_celulas
   try {
     await carregarCelulasCompleto(force);
-  } catch (eCel: any) {
+  } catch (eCel) {
     console.warn("[SharePoint] Erro ao carregar BD_celulas:", eCel?.message || eCel);
     erros.push(`BD_celulas: ${eCel?.message || eCel}`);
   }
-
-  // 4. BD_Capacitacao
   try {
     await carregarCapacitacoesCompleto(force);
-  } catch (eCap: any) {
+  } catch (eCap) {
     console.warn("[SharePoint] Aviso ao carregar BD_Capacitacao:", eCap?.message || eCap);
   }
-
-  // 5. BD_MembrosCapac
   try {
     await carregarMembrosCapacCompleto(force);
-  } catch (eMC: any) {
+  } catch (eMC) {
     console.warn("[SharePoint] Aviso ao carregar BD_MembrosCapac:", eMC?.message || eMC);
   }
-
   if (cache.membros.length > 0 || cache.relatorios.length > 0 || cache.celulas.length > 0 || cache.capacitacoes.length > 0) {
     store.status = "CONECTADO";
     store.erro = erros.length > 0 ? erros.join("; ") : null;
-    store.lastSync = new Date().toISOString();
+    store.lastSync = (/* @__PURE__ */ new Date()).toISOString();
   } else {
     store.status = erros.length > 0 ? "ERRO" : "CONECTADO";
     store.erro = erros.join("; ") || null;
   }
 }
-
-// Inicia sincronização em segundo plano em servidores tradicionais
 if (!process.env.VERCEL) {
   sincronizarListasSharePoint().catch(console.error);
   setInterval(() => {
     sincronizarListasSharePoint().catch(console.error);
-  }, 15 * 60 * 1000);
+  }, 15 * 60 * 1e3);
 }
-
-// --- ROTAS DA API ---
-
-// Conectar e autenticar diretamente com credenciais do SharePoint
-app.post("/api/sharepoint/conectar-credenciais", async (req: Request, res: Response) => {
+app.post("/api/sharepoint/conectar-credenciais", async (req, res) => {
   const { username, password, siteUrl, clientId } = req.body;
   const userLimpo = String(username || "").trim();
   const passLimpa = String(password || "").trim();
-
   if (!userLimpo || !passLimpa) {
     return res.status(400).json({
       sucesso: false,
-      erro: "Por favor, informe o usuário/e-mail e a senha da conta Microsoft do SharePoint."
+      erro: "Por favor, informe o usu\xE1rio/e-mail e a senha da conta Microsoft do SharePoint."
     });
   }
-
   try {
     console.log(`[SharePoint] Tentando autenticar novas credenciais para conta: ${userLimpo}...`);
     SP_USER = userLimpo;
     SP_PASS = passLimpa;
     if (siteUrl) SP_SITE_URL = sanitizeSharePointSiteUrl(siteUrl);
     if (clientId) MS_CLIENT_ID = String(clientId).trim();
-
-    // Persiste credenciais customizadas no /tmp para o ambiente Serverless
     await PersistentCacheManager.saveCredentials({
       user: userLimpo,
       pass: passLimpa,
       siteUrl: SP_SITE_URL,
       clientId: MS_CLIENT_ID,
-      updatedAt: new Date().toISOString()
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
-
-    // Invalida cache de token antigo
     cache.token = null;
     cache.tokenExpiresAt = 0;
-
-    // 1. Obtém token na Microsoft (validação das credenciais)
     const token = await getMicrosoftToken();
-
-    // 2. Valida acesso ao SharePoint e carrega base de membros inicial
     try {
       const membrosIniciais = await fetchSharePointList("BD_membros", 500, false);
       if (Array.isArray(membrosIniciais) && membrosIniciais.length > 0) {
-        cache.membros = membrosIniciais.map((m: any) => ({
+        cache.membros = membrosIniciais.map((m) => ({
           id: m.ID || m.Id,
           ID: m.ID || m.Id,
           Title: m.Title || "",
@@ -465,16 +684,12 @@ app.post("/api/sharepoint/conectar-credenciais", async (req: Request, res: Respo
     } catch (eMem) {
       console.warn("[SharePoint] Aviso ao carregar lote inicial de membros:", eMem);
     }
-
     cache.status = "CONECTADO";
-    cache.lastSync = new Date().toISOString();
+    cache.lastSync = (/* @__PURE__ */ new Date()).toISOString();
     cache.erro = null;
-
-    // Dispara carregamento completo em segundo plano
-    carregarMembrosCompleto().catch(() => {});
-
-    console.log(`[SharePoint] Conexão autenticada com sucesso para ${SP_USER}!`);
-
+    carregarMembrosCompleto().catch(() => {
+    });
+    console.log(`[SharePoint] Conex\xE3o autenticada com sucesso para ${SP_USER}!`);
     return res.json({
       sucesso: true,
       mensagem: "Conectado ao SharePoint com sucesso!",
@@ -484,28 +699,25 @@ app.post("/api/sharepoint/conectar-credenciais", async (req: Request, res: Respo
       relatoriosCount: cache.relatorios.length,
       celulasCount: cache.celulas.length
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[SharePoint] Falha ao autenticar credenciais:", err?.message || err);
     cache.status = "ERRO";
-    cache.erro = err?.message || "Falha na autenticação com o SharePoint";
+    cache.erro = err?.message || "Falha na autentica\xE7\xE3o com o SharePoint";
     return res.status(400).json({
       sucesso: false,
-      erro: err?.message || "Credenciais inválidas ou erro ao conectar na Microsoft Online."
+      erro: err?.message || "Credenciais inv\xE1lidas ou erro ao conectar na Microsoft Online."
     });
   }
 });
-
-// Status da conexão
-app.get("/api/sharepoint/status", async (req: Request, res: Response) => {
-  // Em cold start, valida token Microsoft
+app.get("/api/sharepoint/status", async (req, res) => {
   try {
     if (!cache.token) {
-      await getMicrosoftToken().catch(err => {
+      await getMicrosoftToken().catch((err) => {
         console.warn("[SharePoint] Aviso ao obter token no status:", err?.message);
       });
     }
-  } catch {}
-
+  } catch {
+  }
   res.json({
     status: cache.token || cache.membros.length > 0 ? "CONECTADO" : cache.status,
     conta: SP_USER,
@@ -517,14 +729,11 @@ app.get("/api/sharepoint/status", async (req: Request, res: Response) => {
     erro: cache.erro
   });
 });
-
-// Endpoint de diagnóstico detalhado de cada serviço (Token, Membros, Relatórios, Células)
-app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/diagnostics", async (req, res) => {
   const isVercel = !!process.env.VERCEL;
   const startTime = Date.now();
-  
-  const results: any = {
-    timestamp: new Date().toISOString(),
+  const results = {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     environment: {
       isVercel,
       runtime: isVercel ? "Vercel Serverless Function" : "Node.js Container / Local",
@@ -532,7 +741,7 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
       platform: process.platform,
       vercelRegion: process.env.VERCEL_REGION || "local-dev",
       sharepointUserConfigured: !!SP_USER,
-      sharepointUserMasked: SP_USER ? SP_USER.replace(/(.{2})(.*)(@.*)/, "$1***$3") : "não configurado",
+      sharepointUserMasked: SP_USER ? SP_USER.replace(/(.{2})(.*)(@.*)/, "$1***$3") : "n\xE3o configurado",
       sharepointPassConfigured: !!SP_PASS,
       sharepointPassLength: SP_PASS ? SP_PASS.length : 0,
       siteUrl: SP_SITE_URL,
@@ -542,9 +751,7 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
     overallStatus: "SUCCESS",
     totalDurationMs: 0
   };
-
   try {
-    // Check 1: Microsoft OAuth2 Token
     const t0 = Date.now();
     let token = "";
     try {
@@ -562,16 +769,18 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
       });
       const msDuration = Date.now() - t0;
       const msText = await msRes.text().catch(() => "");
-      let msJson: any = null;
-      try { msJson = JSON.parse(msText); } catch {}
-
+      let msJson = null;
+      try {
+        msJson = JSON.parse(msText);
+      } catch {
+      }
       if (msRes.ok && msJson?.access_token) {
         token = msJson.access_token;
         cache.token = token;
-        cache.tokenExpiresAt = Date.now() + (Number(msJson.expires_in || 3600) * 1000);
+        cache.tokenExpiresAt = Date.now() + Number(msJson.expires_in || 3600) * 1e3;
         results.checks.push({
           id: "auth_token",
-          name: "Autenticação Microsoft OAuth2",
+          name: "Autentica\xE7\xE3o Microsoft OAuth2",
           endpoint: "https://login.microsoftonline.com/organizations/oauth2/token",
           method: "POST",
           status: msRes.status,
@@ -584,7 +793,7 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
         results.overallStatus = "FAILED";
         results.checks.push({
           id: "auth_token",
-          name: "Autenticação Microsoft OAuth2",
+          name: "Autentica\xE7\xE3o Microsoft OAuth2",
           endpoint: "https://login.microsoftonline.com/organizations/oauth2/token",
           method: "POST",
           status: msRes.status,
@@ -595,11 +804,11 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
           details: msJson || msText
         });
       }
-    } catch (err: any) {
+    } catch (err) {
       results.overallStatus = "FAILED";
       results.checks.push({
         id: "auth_token",
-        name: "Autenticação Microsoft OAuth2",
+        name: "Autentica\xE7\xE3o Microsoft OAuth2",
         endpoint: "https://login.microsoftonline.com/organizations/oauth2/token",
         method: "POST",
         status: 0,
@@ -608,21 +817,15 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
         error: err?.message || String(err)
       });
     }
-
-    // Se o token falhou, encerra prematuramente com os dados coletados
     if (!token) {
       results.totalDurationMs = Date.now() - startTime;
       return res.json(results);
     }
-
-    // Helper para testar listas individuais
-    async function testListCheck(id: string, listName: string, guid: string, maxItems: number = 5) {
+    async function testListCheck(id, listName, guid, maxItems = 5) {
       const tStart = Date.now();
       try {
         const isGuid = guid && guid.includes("-") && guid.length > 20;
-        const url = isGuid 
-          ? `${SP_SITE_URL}/_api/web/lists(guid'${guid}')/items?$top=${maxItems}`
-          : `${SP_SITE_URL}/_api/web/lists/getbytitle('${listName}')/items?$top=${maxItems}`;
+        const url = isGuid ? `${SP_SITE_URL}/_api/web/lists(guid'${guid}')/items?$top=${maxItems}` : `${SP_SITE_URL}/_api/web/lists/getbytitle('${listName}')/items?$top=${maxItems}`;
         const resp = await fetch(url, {
           method: "GET",
           headers: {
@@ -632,9 +835,11 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
         });
         const duration = Date.now() - tStart;
         const text = await resp.text().catch(() => "");
-        let json: any = null;
-        try { json = JSON.parse(text); } catch {}
-
+        let json = null;
+        try {
+          json = JSON.parse(text);
+        } catch {
+        }
         if (resp.ok) {
           const count = json?.d?.results?.length ?? (Array.isArray(json?.value) ? json.value.length : 0);
           results.checks.push({
@@ -666,7 +871,7 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
             details: text.slice(0, 400)
           });
         }
-      } catch (err: any) {
+      } catch (err) {
         if (results.overallStatus === "SUCCESS") results.overallStatus = "WARNING";
         results.checks.push({
           id,
@@ -681,31 +886,20 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
         });
       }
     }
-
-    // Check 2: BD_membros
     await testListCheck("bd_membros", "BD_membros", KNOWN_LIST_GUIDS["BD_membros"] || "BD_membros", 5);
-
-    // Check 3: BD_Relatorio
     await testListCheck("bd_relatorio", "BD_Relatorio", KNOWN_LIST_GUIDS["BD_Relatorio"] || "BD_Relatorio", 5);
-
-    // Check 4: BD_celulas
     await testListCheck("bd_celulas", "BD_celulas", KNOWN_LIST_GUIDS["BD_celulas"] || "BD_celulas", 5);
-
-    // Check 5: BD_Capacitacao (Trilho)
     await testListCheck("bd_capacitacao", "BD_Capacitacao", KNOWN_LIST_GUIDS["BD_Capacitacao"] || "BD_Capacitacao", 5);
-
-    // Check 6: BD_MembrosCapac (Trilho Membros)
     await testListCheck("bd_membros_capac", "BD_MembrosCapac", KNOWN_LIST_GUIDS["BD_MembrosCapac"] || "BD_MembrosCapac", 5);
-
     results.totalDurationMs = Date.now() - startTime;
     return res.json(results);
-  } catch (fatalErr: any) {
-    console.error("[Diagnostics] Erro geral ao executar diagnóstico:", fatalErr);
+  } catch (fatalErr) {
+    console.error("[Diagnostics] Erro geral ao executar diagn\xF3stico:", fatalErr);
     results.overallStatus = "FAILED";
     results.totalDurationMs = Date.now() - startTime;
     results.checks.push({
       id: "fatal_diag_error",
-      name: "Execução do Diagnóstico",
+      name: "Execu\xE7\xE3o do Diagn\xF3stico",
       endpoint: "/api/sharepoint/diagnostics",
       method: "GET",
       status: 500,
@@ -716,50 +910,43 @@ app.get("/api/sharepoint/diagnostics", async (req: Request, res: Response) => {
     return res.json(results);
   }
 });
-
-// Rotas de Gestão do Cache Persistente (SWR)
-app.get("/api/sharepoint/cache/status", (req: Request, res: Response) => {
+app.get("/api/sharepoint/cache/status", (req, res) => {
   res.json({
     sucesso: true,
     cache: PersistentCacheManager.getEstatisticas()
   });
 });
-
-app.post("/api/sharepoint/cache/refresh", async (req: Request, res: Response) => {
+app.post("/api/sharepoint/cache/refresh", async (req, res) => {
   try {
-    console.log("[Cache] Forçando atualização total do cache via SWR...");
+    console.log("[Cache] For\xE7ando atualiza\xE7\xE3o total do cache via SWR...");
     await sincronizarListasSharePoint(true);
     res.json({
       sucesso: true,
       mensagem: "Cache revalidado com sucesso!",
       cache: PersistentCacheManager.getEstatisticas()
     });
-  } catch (err: any) {
+  } catch (err) {
     res.status(500).json({
       sucesso: false,
       erro: err?.message || "Erro ao revalidar cache"
     });
   }
 });
-
-app.post("/api/sharepoint/cache/clear", (req: Request, res: Response) => {
+app.post("/api/sharepoint/cache/clear", (req, res) => {
   PersistentCacheManager.limparCache();
   res.json({
     sucesso: true,
     mensagem: "Cache persistente limpo com sucesso!"
   });
 });
-
-// Listar membros sincronizados (com SWR)
-app.get("/api/sharepoint/membros", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/membros", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const membros = await carregarMembrosCompleto(force);
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
     total: membros.length,
-    membros: membros.map((m: any) => ({
+    membros: membros.map((m) => ({
       id: m.id,
       nome: m.nome,
       login: m.login,
@@ -773,42 +960,22 @@ app.get("/api/sharepoint/membros", async (req: Request, res: Response) => {
     }))
   });
 });
-
-// Autenticação de Usuário contra a tabela BD_membros do SharePoint + Master Accounts
-app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
+app.post("/api/sharepoint/auth-membro", async (req, res) => {
   const { login, senha } = req.body;
   const termo = String(login || "").trim();
   const senhaDigitada = String(senha || "").trim();
-
   if (!termo || !senhaDigitada) {
     return res.status(401).json({
       sucesso: false,
       erro: "Por favor, preencha o login e a senha."
     });
   }
-
   const termoNorm = normalizar(termo);
   const senhaDigitadaNorm = senhaDigitada.toLowerCase();
   const senhasValidasPadrao = ["pazsobral23", "12345", "123456", "admin", "teste", "pazsobral", "sobral23", "admin123", "1", "123"];
-
-  // 1. Contas Master / Administrativas
-  const isMasterDeveloper = 
-    termoNorm === "developer.appchurch@gmail.com" || 
-    termoNorm === "developer.appchurch" || 
-    termoNorm === "developer" ||
-    termoNorm === "appchurch";
-
-  const isMasterMidia = 
-    termoNorm === "midia.sobral@paz.church" || 
-    termoNorm === "midia.sobral" || 
-    termoNorm === "midia";
-
-  const isMasterAdmin = 
-    termoNorm === "admin" || 
-    termoNorm === "tesouraria" || 
-    termoNorm === "adm" ||
-    termoNorm === "pazchurch";
-
+  const isMasterDeveloper = termoNorm === "developer.appchurch@gmail.com" || termoNorm === "developer.appchurch" || termoNorm === "developer" || termoNorm === "appchurch";
+  const isMasterMidia = termoNorm === "midia.sobral@paz.church" || termoNorm === "midia.sobral" || termoNorm === "midia";
+  const isMasterAdmin = termoNorm === "admin" || termoNorm === "tesouraria" || termoNorm === "adm" || termoNorm === "pazchurch";
   if (isMasterDeveloper || isMasterMidia || isMasterAdmin) {
     if (senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === SP_PASS || senhaDigitada === "12345") {
       console.log(`[Auth] Login administrativo bem-sucedido: ${termo}`);
@@ -817,26 +984,22 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
         membro: {
           id: 4,
           ID: 4,
-          nome: isMasterDeveloper ? "Developer AppChurch" : (isMasterMidia ? "Mídia Paz Church" : "Junio Fonteles"),
+          nome: isMasterDeveloper ? "Developer AppChurch" : isMasterMidia ? "M\xEDdia Paz Church" : "Junio Fonteles",
           login: termo,
-          email: isMasterDeveloper ? "developer.appchurch@gmail.com" : (isMasterMidia ? "midia.sobral@paz.church" : "tesouraria@pazchurch.com"),
+          email: isMasterDeveloper ? "developer.appchurch@gmail.com" : isMasterMidia ? "midia.sobral@paz.church" : "tesouraria@pazchurch.com",
           cargo: "Tesouraria",
           celula: "Central",
           setor: "Safira",
-          area: "Área Central",
+          area: "\xC1rea Central",
           telefone: "(88) 99999-0000",
           status: "Ativo"
         }
       });
     }
   }
-
-  // 2. Garante que todos os 1.086 membros do SharePoint estejam carregados na memória
   if (cache.membros.length === 0) {
     await carregarMembrosCompleto();
   }
-
-  // 3. Busca na tabela BD_membros por Login, Nome, NomeCompleto, Email, Telefone ou ID
   let membro = cache.membros.find((m) => {
     const loginNorm = normalizar(m.login);
     const nomeNorm = normalizar(m.nome);
@@ -847,20 +1010,8 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
     const telNorm = String(m.telefone || "").replace(/\D/g, "");
     const termoDigitos = termo.replace(/\D/g, "");
     const idNorm = String(m.id || m.ID || "");
-
-    return (
-      loginNorm === termoNorm ||
-      nomeNorm === termoNorm ||
-      nomeCompletoNorm === termoNorm ||
-      titleNorm === termoNorm ||
-      emailNorm === termoNorm ||
-      emailUserNorm === termoNorm ||
-      (termoDigitos.length >= 8 && telNorm.includes(termoDigitos)) ||
-      idNorm === termoNorm
-    );
+    return loginNorm === termoNorm || nomeNorm === termoNorm || nomeCompletoNorm === termoNorm || titleNorm === termoNorm || emailNorm === termoNorm || emailUserNorm === termoNorm || termoDigitos.length >= 8 && telNorm.includes(termoDigitos) || idNorm === termoNorm;
   });
-
-  // Se não localizou na primeira busca e a lista não estava completa, tenta recarregar
   if (!membro && cache.membros.length < 500) {
     await carregarMembrosCompleto();
     membro = cache.membros.find((m) => {
@@ -873,20 +1024,9 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
       const telNorm = String(m.telefone || "").replace(/\D/g, "");
       const termoDigitos = termo.replace(/\D/g, "");
       const idNorm = String(m.id || m.ID || "");
-
-      return (
-        loginNorm === termoNorm ||
-        nomeNorm === termoNorm ||
-        nomeCompletoNorm === termoNorm ||
-        titleNorm === termoNorm ||
-        emailNorm === termoNorm ||
-        emailUserNorm === termoNorm ||
-        (termoDigitos.length >= 8 && telNorm.includes(termoDigitos)) ||
-        idNorm === termoNorm
-      );
+      return loginNorm === termoNorm || nomeNorm === termoNorm || nomeCompletoNorm === termoNorm || titleNorm === termoNorm || emailNorm === termoNorm || emailUserNorm === termoNorm || termoDigitos.length >= 8 && telNorm.includes(termoDigitos) || idNorm === termoNorm;
     });
   }
-
   if (!membro) {
     if (termoNorm.includes("fonteles") || termoNorm === "jfonteles" || termoNorm === "junio") {
       if (senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === "12345" || senhaDigitada === SP_PASS) {
@@ -898,7 +1038,7 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
             nome: "Junio Fonteles",
             login: "Jfonteles",
             email: "juniosina@hotmail.com",
-            cargo: "Líder de Setor",
+            cargo: "L\xEDder de Setor",
             celula: "Adonai",
             setor: "Fire",
             area: "Vermelha",
@@ -908,28 +1048,20 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
         });
       }
     }
-
     return res.status(401).json({
       sucesso: false,
-      erro: `Login "${termo}" não encontrado no cadastro do SharePoint.`
+      erro: `Login "${termo}" n\xE3o encontrado no cadastro do SharePoint.`
     });
   }
-
-  // Validação de senha cadastrada no SharePoint
   const senhaCadastrada = String(membro.senha || "").trim();
-  const senhaCorreta = 
-    (senhaCadastrada && (senhaDigitada === senhaCadastrada || senhaDigitadaNorm === senhaCadastrada.toLowerCase())) ||
-    senhasValidasPadrao.includes(senhaDigitadaNorm) ||
-    senhaDigitada === SP_PASS;
-
+  const senhaCorreta = senhaCadastrada && (senhaDigitada === senhaCadastrada || senhaDigitadaNorm === senhaCadastrada.toLowerCase()) || senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === SP_PASS;
   if (!senhaCorreta) {
     return res.status(401).json({
       sucesso: false,
-      erro: "Senha incorreta para este usuário."
+      erro: "Senha incorreta para este usu\xE1rio."
     });
   }
-
-  console.log(`[Auth] Usuário autenticado com sucesso: ${membro.nome} (${membro.login})`);
+  console.log(`[Auth] Usu\xE1rio autenticado com sucesso: ${membro.nome} (${membro.login})`);
   return res.json({
     sucesso: true,
     membro: {
@@ -947,46 +1079,34 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
     }
   });
 });
-
-// Obter relatórios da lista BD_Relatorio (com SWR)
-app.get("/api/sharepoint/relatorios", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/relatorios", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const relatorios = await carregarRelatoriosCompleto(force);
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
     total: relatorios.length,
-    relatorios: relatorios
+    relatorios
   });
 });
-
-// Obter células da lista BD_celulas (com SWR)
-app.get("/api/sharepoint/celulas", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/celulas", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const celulas = await carregarCelulasCompleto(force);
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
     total: celulas.length,
-    celulas: celulas
+    celulas
   });
 });
-
-// Obter setores distintos da tabela BD_celulas (com SWR)
-app.get("/api/sharepoint/setores", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/setores", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const celulas = await carregarCelulasCompleto(force);
-
   const setoresUnicos = Array.from(
     new Set(
-      celulas
-        .map((c: any) => String(c.Setor || c.setor || "").trim())
-        .filter(Boolean)
+      celulas.map((c) => String(c.Setor || c.setor || "").trim()).filter(Boolean)
     )
   ).sort();
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
@@ -994,12 +1114,9 @@ app.get("/api/sharepoint/setores", async (req: Request, res: Response) => {
     setores: setoresUnicos
   });
 });
-
-// Obter dados brutos de BD_Capacitacao (com SWR)
-app.get("/api/sharepoint/capacitacoes", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/capacitacoes", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const capacitacoes = await carregarCapacitacoesCompleto(force);
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
@@ -1007,12 +1124,9 @@ app.get("/api/sharepoint/capacitacoes", async (req: Request, res: Response) => {
     capacitacoes
   });
 });
-
-// Obter dados brutos de BD_MembrosCapac (com SWR)
-app.get("/api/sharepoint/membros-capac", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/membros-capac", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const membrosCapac = await carregarMembrosCapacCompleto(force);
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
@@ -1020,169 +1134,95 @@ app.get("/api/sharepoint/membros-capac", async (req: Request, res: Response) => 
     membrosCapac
   });
 });
-
-// Obter métricas consolidadas para a tela Indicador Trilho
-app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) => {
+app.get("/api/sharepoint/indicador-trilho", async (req, res) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
-  
   const [membros, celulas, capacitacoes, membrosCapac] = await Promise.all([
     carregarMembrosCompleto(force),
     carregarCelulasCompleto(force),
     carregarCapacitacoesCompleto(force),
     carregarMembrosCapacCompleto(force)
   ]);
-
-  // Mapa de setor para área com base na lista BD_celulas
-  const setorParaAreaMap = new Map<string, string>();
-  celulas.forEach((c: any) => {
+  const setorParaAreaMap = /* @__PURE__ */ new Map();
+  celulas.forEach((c) => {
     const s = String(c.Setor || c.setor || "").trim();
     const a = String(c.Area || c.area || c.Rede || "").trim();
     if (s && a && !setorParaAreaMap.has(s.toLowerCase())) {
       setorParaAreaMap.set(s.toLowerCase(), a);
     }
   });
-
-  // 1. Extrair todas as etapas do trilho a partir de BD_Capacitacao
   const etapasExtraidas = Array.from(
     new Set(
-      capacitacoes
-        .map((c: any) => {
-          const nome = String(
-            c.Capacitacao || 
-            c.capacitacao || 
-            c.Title || 
-            c.NomeCapacitacao || 
-            c.Nome || 
-            c.Etapa || 
-            ""
-          ).trim();
-          return nome;
-        })
-        .filter(Boolean)
+      capacitacoes.map((c) => {
+        const nome = String(
+          c.Capacitacao || c.capacitacao || c.Title || c.NomeCapacitacao || c.Nome || c.Etapa || ""
+        ).trim();
+        return nome;
+      }).filter(Boolean)
     )
   );
-
-  // Etapas padrão da Paz Church como fallback caso a lista ainda esteja sendo populada
   const etapasPadrao = [
     "Encontro com Deus",
     "Batismo",
-    "Maturidade no Espírito",
+    "Maturidade no Esp\xEDrito",
     "CTL",
-    "Treinamento de Líderes"
+    "Treinamento de L\xEDderes"
   ];
-
-  const etapas: string[] = etapasExtraidas.length > 0 ? etapasExtraidas : etapasPadrao;
-
-  // 2. Mapear conclusões de membros de BD_MembrosCapac (verificando ID_membro e Status === 'OK')
-  // Essa verificação é feita em lote único para todas as etapas do trilho
-  const concluidosPorMembroId = new Map<string, Set<string>>();
-  const concluidosPorMembroNome = new Map<string, Set<string>>();
-
-  membrosCapac.forEach((mc: any) => {
-    // Validação de Status (conforme regra de negócio: Status === 'OK')
+  const etapas = etapasExtraidas.length > 0 ? etapasExtraidas : etapasPadrao;
+  const concluidosPorMembroId = /* @__PURE__ */ new Map();
+  const concluidosPorMembroNome = /* @__PURE__ */ new Map();
+  membrosCapac.forEach((mc) => {
     const statusRaw = String(mc.Status || mc.status || mc.STATUS || mc.Situacao || "").trim().toUpperCase();
-    const isConcluido = 
-      statusRaw === "OK" || 
-      statusRaw.includes("OK") || 
-      statusRaw === "1" || 
-      statusRaw === "TRUE" || 
-      statusRaw === "SIM" || 
-      statusRaw === "CONCLUÍDO" || 
-      statusRaw === "CONCLUIDO" || 
-      statusRaw === "CONCLUÍDA" || 
-      statusRaw === "CONCLUIDA" ||
-      !statusRaw; // Se a tabela apenas registra os concluídos sem preencher a coluna status
-
+    const isConcluido = statusRaw === "OK" || statusRaw.includes("OK") || statusRaw === "1" || statusRaw === "TRUE" || statusRaw === "SIM" || statusRaw === "CONCLU\xCDDO" || statusRaw === "CONCLUIDO" || statusRaw === "CONCLU\xCDDA" || statusRaw === "CONCLUIDA" || !statusRaw;
     if (!isConcluido) return;
-
-    // ID do membro que é igual à coluna ID da BD_membros
     const rawId = String(
-      mc.ID_membro ||
-      mc.ID_MEMBRO || 
-      mc.IdMembro || 
-      mc.ID_Membro || 
-      mc.Id_Membro || 
-      mc.id_membro ||
-      mc.MembroId || 
-      mc.Membro_ID || 
-      ""
+      mc.ID_membro || mc.ID_MEMBRO || mc.IdMembro || mc.ID_Membro || mc.Id_Membro || mc.id_membro || mc.MembroId || mc.Membro_ID || ""
     ).trim();
-
     const rawNome = String(
-      mc.NomeMembro || 
-      mc.Membro || 
-      mc.Title || 
-      mc.Nome || 
-      mc.Nome_Membro || 
-      ""
+      mc.NomeMembro || mc.Membro || mc.Title || mc.Nome || mc.Nome_Membro || ""
     ).trim().toLowerCase();
-
     const capNome = String(
-      mc.Capacitacao || 
-      mc.capacitacao || 
-      mc.NomeCapacitacao || 
-      mc.CAPACITACAO || 
-      mc.Etapa || 
-      mc.Title || 
-      ""
+      mc.Capacitacao || mc.capacitacao || mc.NomeCapacitacao || mc.CAPACITACAO || mc.Etapa || mc.Title || ""
     ).trim();
-
     if (!capNome) return;
-
-    // Encontra a etapa correspondente (case-insensitive)
-    const etapaEncontrada = etapas.find(e => 
-      e.toLowerCase() === capNome.toLowerCase() ||
-      capNome.toLowerCase().includes(e.toLowerCase()) ||
-      e.toLowerCase().includes(capNome.toLowerCase())
+    const etapaEncontrada = etapas.find(
+      (e) => e.toLowerCase() === capNome.toLowerCase() || capNome.toLowerCase().includes(e.toLowerCase()) || e.toLowerCase().includes(capNome.toLowerCase())
     ) || capNome;
-
     if (rawId && rawId !== "0" && rawId !== "null") {
       if (!concluidosPorMembroId.has(rawId)) {
-        concluidosPorMembroId.set(rawId, new Set());
+        concluidosPorMembroId.set(rawId, /* @__PURE__ */ new Set());
       }
-      concluidosPorMembroId.get(rawId)!.add(etapaEncontrada);
+      concluidosPorMembroId.get(rawId).add(etapaEncontrada);
     }
-
     if (rawNome) {
       if (!concluidosPorMembroNome.has(rawNome)) {
-        concluidosPorMembroNome.set(rawNome, new Set());
+        concluidosPorMembroNome.set(rawNome, /* @__PURE__ */ new Set());
       }
-      concluidosPorMembroNome.get(rawNome)!.add(etapaEncontrada);
+      concluidosPorMembroNome.get(rawNome).add(etapaEncontrada);
     }
   });
-
-  // 3. Processar membros e vincular etapas concluídas
-  const membrosProcessados = membros.map((m: any) => {
+  const membrosProcessados = membros.map((m) => {
     const mId = String(m.id || m.ID || "").trim();
     const mNome = String(m.nome || m.Title || "").trim();
     const mNomeLower = mNome.toLowerCase();
     const setorOriginal = String(m.setor || m.raw?.Setor || m.raw?.setor || "Sem Setor").trim();
     const areaOriginal = String(m.area || m.raw?.Area || m.raw?.area || setorParaAreaMap.get(setorOriginal.toLowerCase()) || "Geral").trim();
-
-    const etapasConcluidasSet = new Set<string>();
-
-    // Verifica por ID
+    const etapasConcluidasSet = /* @__PURE__ */ new Set();
     if (mId && concluidosPorMembroId.has(mId)) {
-      concluidosPorMembroId.get(mId)!.forEach(e => etapasConcluidasSet.add(e));
+      concluidosPorMembroId.get(mId).forEach((e) => etapasConcluidasSet.add(e));
     }
-
-    // Verifica por Nome
     if (mNomeLower && concluidosPorMembroNome.has(mNomeLower)) {
-      concluidosPorMembroNome.get(mNomeLower)!.forEach(e => etapasConcluidasSet.add(e));
+      concluidosPorMembroNome.get(mNomeLower).forEach((e) => etapasConcluidasSet.add(e));
     }
-
     const etapasConcluidas = Array.from(etapasConcluidasSet);
     const totalConcluidas = etapasConcluidas.length;
     const totalEtapas = etapas.length;
-    const percentual = totalEtapas > 0 ? Math.round((totalConcluidas / totalEtapas) * 100) : 0;
-
-    let statusTrilho: 'Completo' | 'Em Andamento' | 'Não Iniciado' = 'Não Iniciado';
+    const percentual = totalEtapas > 0 ? Math.round(totalConcluidas / totalEtapas * 100) : 0;
+    let statusTrilho = "N\xE3o Iniciado";
     if (totalConcluidas >= totalEtapas && totalEtapas > 0) {
-      statusTrilho = 'Completo';
+      statusTrilho = "Completo";
     } else if (totalConcluidas > 0) {
-      statusTrilho = 'Em Andamento';
+      statusTrilho = "Em Andamento";
     }
-
     return {
       id: mId,
       nome: mNome,
@@ -1198,18 +1238,13 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
       statusTrilho
     };
   });
-
-  // 4. Lista de Áreas e Setores distintos
   const areasDisponiveis = Array.from(
-    new Set(membrosProcessados.map(m => m.area).filter(Boolean))
+    new Set(membrosProcessados.map((m) => m.area).filter(Boolean))
   ).sort();
-
   const setoresDisponiveis = Array.from(
-    new Set(membrosProcessados.map(m => m.setor).filter(Boolean))
+    new Set(membrosProcessados.map((m) => m.setor).filter(Boolean))
   ).sort();
-
-  // Função auxiliar para calcular métricas de um conjunto de membros
-  const calcularMetricasConjunto = (listaMembros: typeof membrosProcessados) => {
+  const calcularMetricasConjunto = (listaMembros) => {
     const total = listaMembros.length;
     if (total === 0) {
       return {
@@ -1218,7 +1253,7 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
         membrosCompletos: 0,
         membrosEmAndamento: 0,
         membrosNaoIniciados: 0,
-        etapasStats: etapas.map(etapa => ({
+        etapasStats: etapas.map((etapa) => ({
           etapa,
           concluidos: 0,
           pendentes: 0,
@@ -1226,11 +1261,10 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
         }))
       };
     }
-
-    const etapasStats = etapas.map(etapa => {
-      const concluidos = listaMembros.filter(m => m.etapasConcluidas.includes(etapa)).length;
+    const etapasStats = etapas.map((etapa) => {
+      const concluidos = listaMembros.filter((m) => m.etapasConcluidas.includes(etapa)).length;
       const pendentes = total - concluidos;
-      const percentual = Math.round((concluidos / total) * 100);
+      const percentual = Math.round(concluidos / total * 100);
       return {
         etapa,
         concluidos,
@@ -1238,14 +1272,11 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
         percentual
       };
     });
-
-    const membrosCompletos = listaMembros.filter(m => m.statusTrilho === 'Completo').length;
-    const membrosEmAndamento = listaMembros.filter(m => m.statusTrilho === 'Em Andamento').length;
-    const membrosNaoIniciados = listaMembros.filter(m => m.statusTrilho === 'Não Iniciado').length;
-
+    const membrosCompletos = listaMembros.filter((m) => m.statusTrilho === "Completo").length;
+    const membrosEmAndamento = listaMembros.filter((m) => m.statusTrilho === "Em Andamento").length;
+    const membrosNaoIniciados = listaMembros.filter((m) => m.statusTrilho === "N\xE3o Iniciado").length;
     const somaPercentuais = listaMembros.reduce((acc, m) => acc + m.percentualConclusao, 0);
     const percentualMedio = Math.round(somaPercentuais / total);
-
     return {
       totalMembros: total,
       percentualMedio,
@@ -1255,24 +1286,17 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
       etapasStats
     };
   };
-
-  // Métricas da Igreja em Geral
   const geral = calcularMetricasConjunto(membrosProcessados);
-
-  // Métricas por Área
-  const porArea: Record<string, ReturnType<typeof calcularMetricasConjunto>> = {};
-  areasDisponiveis.forEach(area => {
-    const membrosDaArea = membrosProcessados.filter(m => m.area.toLowerCase() === area.toLowerCase());
+  const porArea = {};
+  areasDisponiveis.forEach((area) => {
+    const membrosDaArea = membrosProcessados.filter((m) => m.area.toLowerCase() === area.toLowerCase());
     porArea[area] = calcularMetricasConjunto(membrosDaArea);
   });
-
-  // Métricas por Setor
-  const porSetor: Record<string, ReturnType<typeof calcularMetricasConjunto>> = {};
-  setoresDisponiveis.forEach(setor => {
-    const membrosDoSetor = membrosProcessados.filter(m => m.setor.toLowerCase() === setor.toLowerCase());
+  const porSetor = {};
+  setoresDisponiveis.forEach((setor) => {
+    const membrosDoSetor = membrosProcessados.filter((m) => m.setor.toLowerCase() === setor.toLowerCase());
     porSetor[setor] = calcularMetricasConjunto(membrosDoSetor);
   });
-
   res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
   res.json({
     sucesso: true,
@@ -1287,56 +1311,42 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
     membros: membrosProcessados
   });
 });
-
-// Fila por item para sequencializar gravações no SharePoint
-const itemUpdateQueues = new Map<string, Promise<any>>();
-
-function enqueueItemUpdate<T>(id: string, task: () => Promise<T>): Promise<T> {
+var itemUpdateQueues = /* @__PURE__ */ new Map();
+function enqueueItemUpdate(id, task) {
   const current = itemUpdateQueues.get(id) || Promise.resolve();
-  const next = current
-    .then(async () => {
-      await new Promise(r => setTimeout(r, 100));
-      return task();
-    })
-    .finally(() => {
-      if (itemUpdateQueues.get(id) === next) {
-        itemUpdateQueues.delete(id);
-      }
-    });
+  const next = current.then(async () => {
+    await new Promise((r) => setTimeout(r, 100));
+    return task();
+  }).finally(() => {
+    if (itemUpdateQueues.get(id) === next) {
+      itemUpdateQueues.delete(id);
+    }
+  });
   itemUpdateQueues.set(id, next);
   return next;
 }
-
-// Validar relatório
-app.post("/api/sharepoint/validar-relatorio", async (req: Request, res: Response) => {
+app.post("/api/sharepoint/validar-relatorio", async (req, res) => {
   const { id, recebido, idTesoureiro, dataTesouraria } = req.body;
   const isRecebido = Boolean(recebido);
-
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
+  const now = /* @__PURE__ */ new Date();
+  const pad = (n) => String(n).padStart(2, "0");
   const dataBR = dataTesouraria || `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
-  const idTesoureiroFinal = isRecebido 
-    ? (idTesoureiro !== undefined && idTesoureiro !== null && String(idTesoureiro).trim() !== "" ? String(idTesoureiro) : "4")
-    : null;
-
-  const relatorio = cache.relatorios.find((r: any) => String(r.ID || r.Id) === String(id));
+  const idTesoureiroFinal = isRecebido ? idTesoureiro !== void 0 && idTesoureiro !== null && String(idTesoureiro).trim() !== "" ? String(idTesoureiro) : "4" : null;
+  const relatorio = cache.relatorios.find((r) => String(r.ID || r.Id) === String(id));
   if (relatorio) {
     relatorio.TESOURARIA_RECEB = isRecebido;
     relatorio.DATA_TESOURARIA = isRecebido ? dataBR : null;
     relatorio.ID_TESOUREIRO = idTesoureiroFinal;
   }
-
   enqueueItemUpdate(String(id), async () => {
     try {
       const token = await getMicrosoftToken();
       const spValidateUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_Relatorio')/items(${id})/validateUpdateListItem`;
-
       const formValues = [
         { FieldName: "TESOURARIA_RECEB", FieldValue: isRecebido ? "1" : "0" },
         { FieldName: "DATA_TESOURARIA", FieldValue: isRecebido ? dataBR : "" },
         { FieldName: "ID_TESOUREIRO", FieldValue: isRecebido ? String(idTesoureiroFinal || "4") : "" }
       ];
-
       await fetch(spValidateUrl, {
         method: "POST",
         headers: {
@@ -1349,11 +1359,10 @@ app.post("/api/sharepoint/validar-relatorio", async (req: Request, res: Response
           bNewDocumentUpdate: true
         })
       });
-    } catch (err: any) {
-      console.warn("[SharePoint] Falha ao enviar validação para o SharePoint:", err?.message);
+    } catch (err) {
+      console.warn("[SharePoint] Falha ao enviar valida\xE7\xE3o para o SharePoint:", err?.message);
     }
-  }).catch(e => console.warn("[SharePoint] Aviso na fila de validação:", e));
-
+  }).catch((e) => console.warn("[SharePoint] Aviso na fila de valida\xE7\xE3o:", e));
   res.json({
     sucesso: true,
     id,
@@ -1362,44 +1371,39 @@ app.post("/api/sharepoint/validar-relatorio", async (req: Request, res: Response
     ID_TESOUREIRO: idTesoureiroFinal
   });
 });
-
-// Editar relatório
-app.post("/api/sharepoint/editar-relatorio", async (req: Request, res: Response) => {
+app.post("/api/sharepoint/editar-relatorio", async (req, res) => {
   const { id, celula, data, pix, especie, total } = req.body;
-  
-  const item = cache.relatorios.find((r: any) => String(r.ID || r.Id) === String(id));
+  const item = cache.relatorios.find((r) => String(r.ID || r.Id) === String(id));
   if (item) {
-    if (celula !== undefined) {
+    if (celula !== void 0) {
       item.C_x00e9_lula = celula;
-      item.Célula = celula;
+      item.C\u00E9lula = celula;
     }
-    if (data !== undefined) {
+    if (data !== void 0) {
       item.DataNascimento = data;
       item.DataCelula = data;
     }
-    if (pix !== undefined) {
+    if (pix !== void 0) {
       item.Bairro = Number(pix);
       item.ValorOferta = Number(pix);
     }
-    if (especie !== undefined) {
+    if (especie !== void 0) {
       item.OfertaEspecie = Number(especie);
     }
-    if (total !== undefined) {
+    if (total !== void 0) {
       item.valorTotal = Number(total);
       item.Total = Number(total);
     }
   }
-
   enqueueItemUpdate(String(id), async () => {
     try {
       const token = await getMicrosoftToken();
       const spValidateUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_Relatorio')/items(${id})/validateUpdateListItem`;
-      const formValues: Array<{ FieldName: string; FieldValue: string }> = [];
-      if (pix !== undefined) formValues.push({ FieldName: "Bairro", FieldValue: String(pix) });
-      if (especie !== undefined) formValues.push({ FieldName: "OfertaEspecie", FieldValue: String(especie) });
-      if (data !== undefined) formValues.push({ FieldName: "DataNascimento", FieldValue: String(data) });
-      if (celula !== undefined) formValues.push({ FieldName: "C_x00e9_lula", FieldValue: String(celula) });
-
+      const formValues = [];
+      if (pix !== void 0) formValues.push({ FieldName: "Bairro", FieldValue: String(pix) });
+      if (especie !== void 0) formValues.push({ FieldName: "OfertaEspecie", FieldValue: String(especie) });
+      if (data !== void 0) formValues.push({ FieldName: "DataNascimento", FieldValue: String(data) });
+      if (celula !== void 0) formValues.push({ FieldName: "C_x00e9_lula", FieldValue: String(celula) });
       if (formValues.length > 0) {
         await fetch(spValidateUrl, {
           method: "POST",
@@ -1414,47 +1418,40 @@ app.post("/api/sharepoint/editar-relatorio", async (req: Request, res: Response)
           })
         });
       }
-    } catch (err: any) {
-      console.warn("[SharePoint] Falha ao enviar edição para o SharePoint:", err?.message);
+    } catch (err) {
+      console.warn("[SharePoint] Falha ao enviar edi\xE7\xE3o para o SharePoint:", err?.message);
     }
-  }).catch(e => console.warn("[SharePoint] Aviso na fila de edição:", e));
-
+  }).catch((e) => console.warn("[SharePoint] Aviso na fila de edi\xE7\xE3o:", e));
   res.json({
     sucesso: true,
     id,
     item
   });
 });
-
-// Forçar sincronização manual
-app.post("/api/sharepoint/sync", async (req: Request, res: Response) => {
+app.post("/api/sharepoint/sync", async (req, res) => {
   try {
     await sincronizarListasSharePoint();
     res.json({
       sucesso: true,
-      mensagem: "Sincronização com SharePoint concluída.",
+      mensagem: "Sincroniza\xE7\xE3o com SharePoint conclu\xEDda.",
       totalMembros: cache.membros.length,
       totalRelatorios: cache.relatorios.length,
       totalCelulas: cache.celulas.length
     });
-  } catch (err: any) {
+  } catch (err) {
     res.status(500).json({
       sucesso: false,
       erro: err?.message || "Falha ao sincronizar com SharePoint"
     });
   }
 });
-
-// Fallback para rotas /api/* não encontradas - sempre retorna JSON, nunca HTML
-app.use("/api/*", (req: Request, res: Response) => {
+app.use("/api/*", (req, res) => {
   res.status(404).json({
     sucesso: false,
-    erro: `Rota da API não encontrada: ${req.method} ${req.originalUrl || req.url}`
+    erro: `Rota da API n\xE3o encontrada: ${req.method} ${req.originalUrl || req.url}`
   });
 });
-
-// Tratador global de erros da API para evitar crash no runtime do Vercel
-app.use((err: any, req: Request, res: Response, next: any) => {
+app.use((err, req, res, next) => {
   console.error("[API Global Error]", err);
   if (!res.headersSent) {
     res.status(500).json({
@@ -1463,6 +1460,19 @@ app.use((err: any, req: Request, res: Response, next: any) => {
     });
   }
 });
+var app_default = app;
 
-export { app };
-export default app;
+// src/api/serverless.ts
+function handler(req, res) {
+  const matchedPath = req.headers["x-matched-path"] || req.headers["x-forwarded-url"] || req.headers["x-now-route-matches"];
+  if (typeof matchedPath === "string" && (req.url === "/api" || req.url.startsWith("/api/index") || req.url === "/" || req.url.startsWith("/?"))) {
+    req.url = matchedPath;
+  }
+  if (typeof req.url === "string" && req.url.startsWith("/sharepoint/")) {
+    req.url = "/api" + req.url;
+  }
+  return app_default(req, res);
+}
+export {
+  handler as default
+};
