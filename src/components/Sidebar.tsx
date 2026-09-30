@@ -8,7 +8,6 @@ import {
   Grid, 
   LogOut,
   X,
-  Activity,
   GraduationCap
 } from 'lucide-react';
 import { ViewMode } from '../types';
@@ -58,11 +57,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'fluxo-caixa' as ViewMode,
       label: 'Fluxo de Caixa',
       icon: TrendingUp
-    },
-    {
-      id: 'diagnostico' as ViewMode,
-      label: 'Diagnóstico & Logs',
-      icon: Activity
     }
   ];
 

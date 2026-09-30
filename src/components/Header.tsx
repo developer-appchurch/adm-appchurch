@@ -66,8 +66,6 @@ export const Header: React.FC<HeaderProps> = ({
         return 'Relatórios de Fluxo de Caixa';
       case 'indicador-trilho':
         return 'Indicador do Trilho de Capacitação';
-      case 'diagnostico':
-        return 'Diagnóstico & Logs da API';
       default:
         return 'Tesouraria AppChurch';
     }
@@ -194,8 +192,8 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </>
-        ) : currentView !== 'validar-relatorios' ? (
-          /* Ano selector padrão para outras telas */
+        ) : currentView === 'dashboard' ? (
+          /* Ano selector apenas para a tela Dashboard */
           <div className="flex items-center gap-1.5 bg-[#252a40] px-2.5 py-1.5 rounded border border-[#394164]">
             <label htmlFor="select-ano-header" className="text-[11px] sm:text-xs text-slate-300 font-medium">
               Ano:

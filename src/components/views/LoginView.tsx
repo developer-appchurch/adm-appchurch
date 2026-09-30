@@ -132,7 +132,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
         isOpen={isModalSharePointOpen}
         onClose={() => setIsModalSharePointOpen(false)}
         onConectadoComSucesso={handleSharePointConectadoSucesso}
-        onAbrirDiagnostico={onSelectView ? () => onSelectView('diagnostico') : undefined}
       />
 
       <div 

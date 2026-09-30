@@ -137,21 +137,31 @@ export const IndicadorTrilhoView: React.FC = () => {
         totalMembros: 0,
         percentualMedio: 0,
         membrosCompletos: 0,
+        pctCompletos: '0.0',
+        membrosNaoCompletos: 0,
+        pctNaoCompletos: '0.0',
+        membrosComZero: 0,
+        pctComZero: '0.0',
         membrosEmAndamento: 0,
+        pctEmAndamento: '0.0',
         membrosNaoIniciados: 0,
         etapasStats: etapas.map(etapa => ({
           etapa,
           concluidos: 0,
           pendentes: 0,
           percentual: 0
-        }))
+        })),
+        maxPercentual: 0,
+        etapasDestaque: [] as { etapa: string; concluidos: number; pendentes: number; percentual: number }[],
+        minPercentual: 0,
+        etapasGargalo: [] as { etapa: string; concluidos: number; pendentes: number; percentual: number }[]
       };
     }
 
     const etapasStats = etapas.map(etapa => {
       const concluidos = membrosFiltradosPorVisao.filter(m => m.etapasConcluidas.includes(etapa)).length;
       const pendentes = total - concluidos;
-      const percentual = Math.round((concluidos / total) * 100);
+      const percentual = parseFloat(((concluidos / total) * 100).toFixed(1));
       return {
         etapa,
         concluidos,
@@ -160,20 +170,56 @@ export const IndicadorTrilhoView: React.FC = () => {
       };
     });
 
-    const membrosCompletos = membrosFiltradosPorVisao.filter(m => m.statusTrilho === 'Completo').length;
-    const membrosEmAndamento = membrosFiltradosPorVisao.filter(m => m.statusTrilho === 'Em Andamento').length;
-    const membrosNaoIniciados = membrosFiltradosPorVisao.filter(m => m.statusTrilho === 'Não Iniciado').length;
+    // Quantidade de membros que completaram 100% do trilho
+    const membrosCompletos = membrosFiltradosPorVisao.filter(m => 
+      m.statusTrilho === 'Completo' || (etapas.length > 0 && m.etapasConcluidas.length >= etapas.length)
+    ).length;
+    const pctCompletos = ((membrosCompletos / total) * 100).toFixed(1);
 
-    const somaPercentuais = membrosFiltradosPorVisao.reduce((acc, m) => acc + m.percentualConclusao, 0);
-    const percentualMedio = Math.round(somaPercentuais / total);
+    // Membros que ainda não completaram o trilho (< 100%)
+    const membrosNaoCompletos = total - membrosCompletos;
+    const pctNaoCompletos = ((membrosNaoCompletos / total) * 100).toFixed(1);
+
+    // Membros com 0% do trilho (não iniciados)
+    const membrosComZero = membrosFiltradosPorVisao.filter(m => m.etapasConcluidas.length === 0).length;
+    const pctComZero = ((membrosComZero / total) * 100).toFixed(1);
+
+    // Membros em andamento (> 0% e < 100%)
+    const membrosEmAndamento = total - membrosCompletos - membrosComZero;
+    const pctEmAndamento = ((membrosEmAndamento / total) * 100).toFixed(1);
+
+    // Conclusão Média do Trilho: Média de quantos % do trilho foi concluído de todos os membros dentro do filtro selecionado
+    const somaPercentuais = membrosFiltradosPorVisao.reduce((acc, m) => {
+      const pctMembro = etapas.length > 0 ? (m.etapasConcluidas.length / etapas.length) * 100 : 0;
+      return acc + pctMembro;
+    }, 0);
+    const percentualMedio = parseFloat((somaPercentuais / total).toFixed(1));
+
+    // Destaque (Maior porcentagem)
+    const maxPercentual = etapasStats.length > 0 ? Math.max(...etapasStats.map(e => e.percentual)) : 0;
+    const etapasDestaque = etapasStats.filter(e => e.percentual === maxPercentual);
+
+    // Gargalo (Menor porcentagem - com detecção de empate)
+    const minPercentual = etapasStats.length > 0 ? Math.min(...etapasStats.map(e => e.percentual)) : 0;
+    const etapasGargalo = etapasStats.filter(e => e.percentual === minPercentual);
 
     return {
       totalMembros: total,
       percentualMedio,
       membrosCompletos,
+      pctCompletos,
+      membrosNaoCompletos,
+      pctNaoCompletos,
+      membrosComZero,
+      pctComZero,
       membrosEmAndamento,
-      membrosNaoIniciados,
-      etapasStats
+      pctEmAndamento,
+      membrosNaoIniciados: membrosComZero,
+      etapasStats,
+      maxPercentual,
+      etapasDestaque,
+      minPercentual,
+      etapasGargalo
     };
   }, [membrosFiltradosPorVisao, etapas]);
 
@@ -239,17 +285,6 @@ export const IndicadorTrilhoView: React.FC = () => {
     });
   }, [membrosFiltradosPorVisao, buscaMembro, filtroStatusMembro, filtroEtapaPendente]);
 
-  // Etapa com maior taxa e etapa com maior gargalo
-  const etapaDestaqueMaior = useMemo(() => {
-    if (metricasAtuais.etapasStats.length === 0) return null;
-    return [...metricasAtuais.etapasStats].sort((a, b) => b.percentual - a.percentual)[0];
-  }, [metricasAtuais]);
-
-  const etapaGargalo = useMemo(() => {
-    if (metricasAtuais.etapasStats.length === 0) return null;
-    return [...metricasAtuais.etapasStats].sort((a, b) => a.percentual - b.percentual)[0];
-  }, [metricasAtuais]);
-
   // Função para exportar CSV da lista filtrada de membros
   const exportarCSV = () => {
     if (membrosTabela.length === 0) return;
@@ -278,15 +313,77 @@ export const IndicadorTrilhoView: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[70vh] p-8 text-center space-y-4">
-        <div className="w-16 h-16 rounded-2xl bg-[#242a42] border border-indigo-500/30 flex items-center justify-center animate-pulse">
-          <GraduationCap className="w-8 h-8 text-indigo-400 animate-bounce" />
+      <div id="indicador-trilho-loading" className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto animate-fadeIn">
+        {/* Banner de carregamento com progresso animado */}
+        <div className="bg-[#141724] border border-indigo-500/30 p-6 sm:p-8 rounded-2xl shadow-2xl relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-transparent animate-pulse" />
+          
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center shrink-0">
+                <GraduationCap className="w-8 h-8 sm:w-9 sm:h-9 text-indigo-400 animate-bounce" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg sm:text-2xl font-black text-white tracking-tight">
+                    Consultando Indicador do Trilho...
+                  </h2>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 animate-pulse">
+                    SharePoint Online
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-slate-300 mt-1">
+                  Carregando BD_Capacitacao, cruzando com mais de 6.600 registros de BD_MembrosCapac e vinculando aos membros.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 bg-[#1c2032] px-4 py-2.5 rounded-xl border border-indigo-500/30 shrink-0">
+              <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
+              <div className="text-xs text-slate-200">
+                <p className="font-bold">Processando Métricas</p>
+                <p className="text-[10px] text-slate-400">Por favor, aguarde...</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Barra de progresso animada */}
+          <div className="relative z-10 mt-6 w-full bg-[#1b1f30] rounded-full h-2 overflow-hidden border border-[#2c334d]">
+            <div className="bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 h-full rounded-full animate-pulse w-3/4 transition-all duration-1000" />
+          </div>
         </div>
-        <div>
-          <h3 className="text-lg font-bold text-white">Carregando Indicador do Trilho...</h3>
-          <p className="text-xs text-slate-400 mt-1">
-            Cruzando dados de BD_Capacitacao, BD_MembrosCapac e BD_membros do SharePoint
-          </p>
+
+        {/* Skeleton Grid de KPI Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { label: 'Total de Membros', cor: 'indigo' },
+            { label: 'Conclusão Média do Trilho', cor: 'emerald' },
+            { label: 'Trilho Completo (100%)', cor: 'purple' },
+            { label: 'Destaque & Gargalo', cor: 'amber' }
+          ].map((card, i) => (
+            <div key={i} className="bg-[#161a29] border border-[#272d42] rounded-2xl p-5 shadow-lg space-y-3 animate-pulse">
+              <div className="flex items-center justify-between">
+                <div className="h-3 bg-slate-700/60 rounded w-24" />
+                <div className="w-7 h-7 rounded-lg bg-slate-700/50" />
+              </div>
+              <div className="h-8 bg-slate-700/80 rounded w-20" />
+              <div className="h-2 bg-slate-700/40 rounded w-full" />
+              <div className="h-3 bg-slate-700/40 rounded w-32" />
+            </div>
+          ))}
+        </div>
+
+        {/* Skeleton do Gráfico Principal */}
+        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-6 shadow-xl space-y-4 animate-pulse">
+          <div className="flex items-center justify-between border-b border-[#23283c] pb-3">
+            <div className="h-4 bg-slate-700/60 rounded w-48" />
+            <div className="h-3 bg-slate-700/40 rounded w-28" />
+          </div>
+          <div className="h-64 bg-[#10121d] rounded-xl flex items-end justify-between p-6 gap-3">
+            {[45, 60, 30, 80, 55, 40, 70, 90, 65, 50, 75, 85].map((h, idx) => (
+              <div key={idx} className="flex-1 bg-indigo-500/20 rounded-t-lg transition-all" style={{ height: `${h}%` }} />
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -473,99 +570,202 @@ export const IndicadorTrilhoView: React.FC = () => {
       {/* KPI Cards de Resumo */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Total de Membros */}
-        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Total de Membros
-            </span>
-            <div className="p-2 rounded-xl bg-indigo-500/15 text-indigo-400">
-              <Users className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-white font-mono">
-              {metricasAtuais.totalMembros}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">
-              {visao === 'geral' ? 'na Igreja' : visao === 'area' ? 'na Área' : 'no Setor'}
-            </span>
-          </div>
-          <div className="mt-3 text-[11px] text-slate-400 flex items-center gap-1">
-            <span className="text-emerald-400 font-bold">{data?.totalCapacitacoesRegistros || 0}</span>
-            <span>registros em BD_MembrosCapac</span>
-          </div>
-        </div>
-
-        {/* Card 2: % Médio de Conclusão */}
-        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Conclusão Média do Trilho
-            </span>
-            <div className="p-2 rounded-xl bg-emerald-500/15 text-emerald-400">
-              <TrendingUp className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">
-              {metricasAtuais.percentualMedio}%
-            </span>
-            <span className="text-xs text-slate-400 font-medium">de avanço geral</span>
-          </div>
-          <div className="mt-3 w-full bg-[#202538] rounded-full h-2 overflow-hidden">
-            <div
-              className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(100, metricasAtuais.percentualMedio)}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Card 3: Trilho 100% Concluído */}
-        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Trilho Completo (100%)
-            </span>
-            <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400">
-              <Award className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-black text-purple-300 font-mono">
-              {metricasAtuais.membrosCompletos}
-            </span>
-            <span className="text-xs text-slate-400 font-medium">
-              ({metricasAtuais.totalMembros > 0 ? Math.round((metricasAtuais.membrosCompletos / metricasAtuais.totalMembros) * 100) : 0}%)
-            </span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
-            <span>Em andamento: <strong className="text-amber-400">{metricasAtuais.membrosEmAndamento}</strong></span>
-            <span>Não iniciados: <strong className="text-slate-300">{metricasAtuais.membrosNaoIniciados}</strong></span>
-          </div>
-        </div>
-
-        {/* Card 4: Etapas Destaque */}
-        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Destaque & Gargalo
-            </span>
-            <div className="p-2 rounded-xl bg-amber-500/15 text-amber-400">
-              <Sparkles className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 space-y-1.5 text-xs">
+        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all flex flex-col justify-between">
+          <div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-400 truncate max-w-[130px]">🏆 {etapaDestaqueMaior?.etapa || '-'}:</span>
-              <span className="font-bold text-emerald-400">{etapaDestaqueMaior?.percentual ?? 0}%</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Total de Membros
+              </span>
+              <div className="p-2 rounded-xl bg-indigo-500/15 text-indigo-400">
+                <Users className="w-4 h-4" />
+              </div>
             </div>
-            <div className="flex items-center justify-between border-t border-[#23283c] pt-1">
-              <span className="text-slate-400 truncate max-w-[130px]">⚠️ {etapaGargalo?.etapa || '-'}:</span>
-              <span className="font-bold text-amber-400">{etapaGargalo?.percentual ?? 0}%</span>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl sm:text-3xl font-black text-white font-mono">
+                {metricasAtuais.totalMembros}
+              </span>
+              <span className="text-xs text-slate-400 font-medium">
+                {visao === 'geral' ? 'na Igreja' : visao === 'area' ? `na Área ${areaSelecionada}` : `no Setor ${setorSelecionado}`}
+              </span>
+            </div>
+            <div className="mt-3 text-[11px] text-slate-400 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>Com capacitações:</span>
+                <span className="text-emerald-400 font-bold font-mono">
+                  {metricasAtuais.totalMembros - metricasAtuais.membrosComZero}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Sem capacitações (0%):</span>
+                <span className="text-rose-400 font-bold font-mono">
+                  {metricasAtuais.membrosComZero}
+                </span>
+              </div>
             </div>
           </div>
-          <div className="mt-2.5 text-[10px] text-slate-500">
-            {etapas.length} etapas no trilho (BD_Capacitacao)
+          <div className="mt-3 pt-2 border-t border-[#23283c] text-[10px] text-slate-400 flex items-center justify-between">
+            <span className="text-slate-500">Relacionamento:</span>
+            <span className="text-indigo-400 font-medium truncate" title="BD_Capacitacao (Capacitacao) ↔ BD_MembrosCapac (Capacitacao)">
+              BD_Capacitacao ↔ BD_MembrosCapac
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Conclusão Média do Trilho */}
+        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Conclusão Média do Trilho
+              </span>
+              <div className="p-2 rounded-xl bg-emerald-500/15 text-emerald-400">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">
+                {metricasAtuais.percentualMedio}%
+              </span>
+              <span className="text-xs text-slate-400 font-medium">média dos membros</span>
+            </div>
+            <div className="mt-3 w-full bg-[#202538] rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, metricasAtuais.percentualMedio)}%` }}
+              />
+            </div>
+            <p className="mt-2.5 text-[11px] text-slate-400 leading-snug">
+              Média de quantos % do trilho foi concluído de todos os {metricasAtuais.totalMembros} membros dentro do filtro selecionado.
+            </p>
+          </div>
+          <div className="mt-3 pt-2 border-t border-[#23283c] text-[10px] text-slate-500 flex items-center justify-between">
+            <span>Escopo: {visao === 'geral' ? 'Toda Igreja' : visao === 'area' ? `Área ${areaSelecionada}` : `Setor ${setorSelecionado}`}</span>
+            <span className="text-emerald-400 font-medium">{etapas.length} etapas base</span>
+          </div>
+        </div>
+
+        {/* Card 3: Trilho Completo (100%) */}
+        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Trilho Completo (100%)
+              </span>
+              <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400">
+                <Award className="w-4 h-4" />
+              </div>
+            </div>
+
+            {/* Quantidade de membros com 100% e ao lado a % em relação ao total */}
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl sm:text-3xl font-black text-purple-300 font-mono">
+                {metricasAtuais.membrosCompletos}
+              </span>
+              <span className="text-base font-bold text-purple-400 font-mono">
+                ({metricasAtuais.pctCompletos}%)
+              </span>
+              <span className="text-xs text-slate-400 font-medium">do total</span>
+            </div>
+
+            {/* Contagem de quantos ainda não completaram e quantos com 0% */}
+            <div className="mt-3 pt-2.5 border-t border-[#23283c] space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Ainda não concluíram:</span>
+                <span className="font-semibold text-amber-300 font-mono">
+                  {metricasAtuais.membrosNaoCompletos} <span className="text-[11px] font-normal text-slate-400">({metricasAtuais.pctNaoCompletos}%)</span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Com 0% do trilho:</span>
+                <span className="font-semibold text-rose-300 font-mono">
+                  {metricasAtuais.membrosComZero} <span className="text-[11px] font-normal text-slate-400">({metricasAtuais.pctComZero}%)</span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 pt-2 border-t border-[#23283c] text-[10px] text-slate-500 flex items-center justify-between">
+            <span>Em andamento (&gt;0% e &lt;100%):</span>
+            <span className="text-amber-400 font-medium font-mono">
+              {metricasAtuais.membrosEmAndamento} ({metricasAtuais.pctEmAndamento}%)
+            </span>
+          </div>
+        </div>
+
+        {/* Card 4: Destaque & Gargalo (com tratamento de empate) */}
+        <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group hover:border-indigo-500/40 transition-all flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Destaque &amp; Gargalo
+              </span>
+              <div className="p-2 rounded-xl bg-amber-500/15 text-amber-400">
+                <Sparkles className="w-4 h-4" />
+              </div>
+            </div>
+
+            <div className="mt-2.5 space-y-2.5 text-xs">
+              {/* Maior Porcentagem (Destaque) */}
+              <div className="bg-[#1b2033] border border-emerald-500/20 rounded-xl p-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    🏆 Maior % ({metricasAtuais.maxPercentual}%)
+                  </span>
+                  {metricasAtuais.etapasDestaque.length > 1 && (
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold px-1.5 py-0.5 rounded">
+                      {metricasAtuais.etapasDestaque.length} empatadas
+                    </span>
+                  )}
+                </div>
+                <p className="text-slate-200 text-xs font-medium mt-1 truncate" title={metricasAtuais.etapasDestaque.map(e => e.etapa).join(', ')}>
+                  {metricasAtuais.etapasDestaque.map(e => e.etapa).join(', ') || '-'}
+                </p>
+              </div>
+
+              {/* Menor Porcentagem (Gargalo - com tratamento explícito de empate) */}
+              <div className="bg-[#1b2033] border border-amber-500/20 rounded-xl p-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-amber-400 font-bold flex items-center gap-1">
+                    ⚠️ Menor % ({metricasAtuais.minPercentual}%)
+                  </span>
+                  {metricasAtuais.etapasGargalo.length > 1 ? (
+                    <span className="text-[10px] bg-amber-500/20 text-amber-300 font-semibold px-1.5 py-0.5 rounded">
+                      Empate ({metricasAtuais.etapasGargalo.length} etapas)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400">Etapa crítica</span>
+                  )}
+                </div>
+
+                {metricasAtuais.etapasGargalo.length > 1 ? (
+                  <div className="mt-1.5 space-y-1">
+                    <span className="text-[11px] text-slate-400 block font-normal">
+                      Etapas empatadas com menor índice:
+                    </span>
+                    <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto pr-1">
+                      {metricasAtuais.etapasGargalo.map(eg => (
+                        <span
+                          key={eg.etapa}
+                          className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-200 text-[10px] rounded font-medium truncate max-w-[140px]"
+                          title={`${eg.etapa} (${eg.percentual}%)`}
+                        >
+                          {eg.etapa} ({eg.percentual}%)
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-slate-200 text-xs font-medium mt-1 truncate" title={metricasAtuais.etapasGargalo[0]?.etapa}>
+                    {metricasAtuais.etapasGargalo[0]?.etapa || '-'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 pt-2 border-t border-[#23283c] text-[10px] text-slate-500 flex items-center justify-between">
+            <span>Base: {etapas.length} etapas</span>
+            <span className="text-indigo-400 font-medium">BD_Capacitacao</span>
           </div>
         </div>
       </div>
@@ -772,72 +972,6 @@ export const IndicadorTrilhoView: React.FC = () => {
                   </span>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Linha 2: Funil Visual de Retenção do Trilho */}
-          <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-5 shadow-xl">
-            <div className="flex items-center justify-between mb-4 border-b border-[#23283c] pb-3">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-emerald-400" />
-                <h2 className="text-sm font-bold text-white">
-                  Funil de Progressão & Retenção do Trilho
-                </h2>
-              </div>
-              <span className="text-xs text-slate-400">
-                Avanço sequencial dos membros nas etapas
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-              {metricasAtuais.etapasStats.map((item, idx) => {
-                const anterior = idx > 0 ? metricasAtuais.etapasStats[idx - 1] : null;
-                const conversao = anterior && anterior.concluidos > 0
-                  ? Math.round((item.concluidos / anterior.concluidos) * 100)
-                  : null;
-
-                return (
-                  <div
-                    key={item.etapa}
-                    className="relative bg-[#11131e] border border-[#262c40] rounded-xl p-4 flex flex-col justify-between hover:border-indigo-500/50 transition-all"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-[#20263a] text-indigo-300">
-                          Passo {idx + 1}
-                        </span>
-                        {conversao !== null && (
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                            conversao >= 70 ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'
-                          }`}>
-                            {conversao}% conv.
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="text-xs font-bold text-white line-clamp-2 min-h-[32px]">
-                        {item.etapa}
-                      </h4>
-                    </div>
-
-                    <div className="mt-3 pt-2 border-t border-[#1d2233]">
-                      <div className="flex items-baseline justify-between">
-                        <span className="text-lg font-black text-white font-mono">
-                          {item.concluidos}
-                        </span>
-                        <span className="text-xs font-bold text-emerald-400">
-                          {item.percentual}%
-                        </span>
-                      </div>
-                      <div className="mt-1.5 w-full bg-[#1b1f30] rounded-full h-1.5 overflow-hidden">
-                        <div
-                          className="bg-indigo-500 h-full rounded-full"
-                          style={{ width: `${item.percentual}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
         </div>

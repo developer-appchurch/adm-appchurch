@@ -19,13 +19,9 @@ import {
 import { 
   LancamentoTesouraria, 
   FiltrosFluxoCaixa, 
-  VisualizacaoAgrupamento, 
-  SetorTipo, 
-  AreaTipo 
+  VisualizacaoAgrupamento 
 } from '../../types';
 import { 
-  SETORES_DISPONIVEIS, 
-  AREAS_DISPONIVEIS, 
   CATEGORIAS_ENTRADA, 
   CATEGORIAS_SAIDA 
 } from '../../data/mockSharePointData';
@@ -53,6 +49,34 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     if (Array.isArray(lancamentos) && lancamentos.length > 0) return lancamentos;
     return [];
   }, [todosLancamentos, lancamentos]);
+
+  // Setores extraídos dinamicamente do banco de dados do SharePoint
+  const setoresDisponiveisReais = useMemo(() => {
+    const set = new Set<string>();
+    listaLancamentos.forEach(l => {
+      const s = String(l.setor || l.Setor || '').trim();
+      if (s && s !== 'Sem Setor' && !s.includes('Amarelo 1') && !s.includes('Roxo')) {
+        set.add(s);
+      }
+    });
+    const list = Array.from(set).sort();
+    return list.length > 0 
+      ? list 
+      : ['Amarelo', 'Azul', 'Black', 'Diamante', 'Fire', 'Legacy', 'Onix', 'Safira', 'Titanium', 'White'];
+  }, [listaLancamentos]);
+
+  // Áreas extraídas dinamicamente do banco de dados do SharePoint
+  const areasDisponiveisReais = useMemo(() => {
+    const set = new Set<string>();
+    listaLancamentos.forEach(l => {
+      const a = String(l.area || l.Area || '').trim();
+      if (a && a !== 'Geral' && !a.includes('Área Central') && !a.includes('Área Norte')) {
+        set.add(a);
+      }
+    });
+    const list = Array.from(set).sort();
+    return list.length > 0 ? list : ['Laranja', 'Vermelha'];
+  }, [listaLancamentos]);
   // Filtros
   const [filtros, setFiltros] = useState<FiltrosFluxoCaixa>({
     periodoPredefinido: 'todos',
@@ -224,12 +248,16 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   const dadosSetores = useMemo(() => {
     const setorMap = new Map<string, { entradas: number; pix: number; especie: number; saidas: number; qtd: number }>();
     
-    SETORES_DISPONIVEIS.forEach(s => {
+    setoresDisponiveisReais.forEach(s => {
       setorMap.set(s, { entradas: 0, pix: 0, especie: 0, saidas: 0, qtd: 0 });
     });
 
     lancamentosFiltrados.forEach(l => {
-      const current = setorMap.get(l.setor) || { entradas: 0, pix: 0, especie: 0, saidas: 0, qtd: 0 };
+      const sNome = l.setor || 'Sem Setor';
+      if (!setorMap.has(sNome)) {
+        setorMap.set(sNome, { entradas: 0, pix: 0, especie: 0, saidas: 0, qtd: 0 });
+      }
+      const current = setorMap.get(sNome)!;
       if (l.tipo === 'ENTRADA') {
         if (l.TESOURARIA_RECEB === true) {
           current.entradas += (l.Total ?? l.valorTotal ?? 0);
@@ -240,7 +268,6 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
         current.saidas += l.valorTotal;
       }
       current.qtd += 1;
-      setorMap.set(l.setor, current);
     });
 
     const totalGlobalEntradas = metricas.totalEntradas || 1;
@@ -253,18 +280,22 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
         percentual: (vals.entradas / totalGlobalEntradas) * 100
       }))
       .sort((a, b) => b.entradas - a.entradas);
-  }, [lancamentosFiltrados, metricas.totalEntradas]);
+  }, [lancamentosFiltrados, metricas.totalEntradas, setoresDisponiveisReais]);
 
   // 3. Dados para Agrupamento por Área - entradas somente validadas por TESOURARIA_RECEB
   const dadosAreas = useMemo(() => {
     const areaMap = new Map<string, { entradas: number; saidas: number; pix: number; especie: number; qtd: number }>();
 
-    AREAS_DISPONIVEIS.forEach(a => {
+    areasDisponiveisReais.forEach(a => {
       areaMap.set(a, { entradas: 0, saidas: 0, pix: 0, especie: 0, qtd: 0 });
     });
 
     lancamentosFiltrados.forEach(l => {
-      const current = areaMap.get(l.area) || { entradas: 0, saidas: 0, pix: 0, especie: 0, qtd: 0 };
+      const aNome = l.area || 'Geral';
+      if (!areaMap.has(aNome)) {
+        areaMap.set(aNome, { entradas: 0, saidas: 0, pix: 0, especie: 0, qtd: 0 });
+      }
+      const current = areaMap.get(aNome)!;
       if (l.tipo === 'ENTRADA') {
         if (l.TESOURARIA_RECEB === true) {
           current.entradas += (l.Total ?? l.valorTotal ?? 0);
@@ -275,7 +306,6 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
         current.saidas += l.valorTotal;
       }
       current.qtd += 1;
-      areaMap.set(l.area, current);
     });
 
     return Array.from(areaMap.entries()).map(([area, vals]) => ({
@@ -283,7 +313,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
       ...vals,
       saldo: vals.entradas - vals.saidas
     }));
-  }, [lancamentosFiltrados]);
+  }, [lancamentosFiltrados, areasDisponiveisReais]);
 
   // 4. Dados para Comparativo Anual (2025 vs 2026) - entradas validadas por TESOURARIA_RECEB
   const dadosAnuais = useMemo(() => {
@@ -488,13 +518,13 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
               id="filtro-setor"
               value={filtros.setor}
               onChange={(e) => {
-                setFiltros(prev => ({ ...prev, setor: e.target.value as SetorTipo | 'todos' }));
+                setFiltros(prev => ({ ...prev, setor: e.target.value }));
                 setPaginaAtual(1);
               }}
               className="w-full bg-[#181b2a] border border-[#343b56] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-400 cursor-pointer"
             >
               <option value="todos">Todos os Setores</option>
-              {SETORES_DISPONIVEIS.map(s => (
+              {setoresDisponiveisReais.map(s => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
@@ -507,13 +537,13 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
               id="filtro-area"
               value={filtros.area}
               onChange={(e) => {
-                setFiltros(prev => ({ ...prev, area: e.target.value as AreaTipo | 'todos' }));
+                setFiltros(prev => ({ ...prev, area: e.target.value }));
                 setPaginaAtual(1);
               }}
               className="w-full bg-[#181b2a] border border-[#343b56] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-indigo-400 cursor-pointer"
             >
               <option value="todos">Todas as Áreas</option>
-              {AREAS_DISPONIVEIS.map(a => (
+              {areasDisponiveisReais.map(a => (
                 <option key={a} value={a}>{a}</option>
               ))}
             </select>

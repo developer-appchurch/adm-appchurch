@@ -1,19 +1,17 @@
 import React, { useState } from 'react';
-import { Database, Lock, Globe, CheckCircle2, AlertCircle, RefreshCw, X, Eye, EyeOff, ShieldCheck, Server, Activity } from 'lucide-react';
+import { Database, Lock, Globe, CheckCircle2, AlertCircle, RefreshCw, X, Eye, EyeOff, ShieldCheck, Server } from 'lucide-react';
 import { SharePointService } from '../../services/sharepointService';
 
 interface SharePointLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConectadoComSucesso?: () => void;
-  onAbrirDiagnostico?: () => void;
 }
 
 export const SharePointLoginModal: React.FC<SharePointLoginModalProps> = ({
   isOpen,
   onClose,
-  onConectadoComSucesso,
-  onAbrirDiagnostico
+  onConectadoComSucesso
 }) => {
   const spService = SharePointService.getInstance();
   const currentCfg = spService.getConfig();
@@ -274,20 +272,6 @@ export const SharePointLoginModal: React.FC<SharePointLoginModalProps> = ({
                 >
                   Restaurar padrão
                 </button>
-
-                {onAbrirDiagnostico && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      onAbrirDiagnostico();
-                    }}
-                    className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                  >
-                    <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Ver Diagnóstico da API</span>
-                  </button>
-                )}
 
                 {sucesso && (
                   <button

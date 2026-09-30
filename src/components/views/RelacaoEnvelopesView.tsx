@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Calendar, CheckCircle, CheckCircle2, Clock, Copy, X, AlertTriangle } from 'lucide-react';
+import { Calendar, CheckCircle, CheckCircle2, Clock, Copy, X, AlertTriangle, Trash2, Loader2 } from 'lucide-react';
 import { LancamentoTesouraria } from '../../types';
 import { SharePointService } from '../../services/sharepointService';
 
@@ -55,6 +55,28 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
   const [membrosBD, setMembrosBD] = useState<any[]>(spService.getMembros());
   const [isCarregando, setIsCarregando] = useState<boolean>(false);
   const [modalDuplicadosAberto, setModalDuplicadosAberto] = useState<boolean>(false);
+  const [relatorioParaExcluir, setRelatorioParaExcluir] = useState<any | null>(null);
+  const [isExcluindo, setIsExcluindo] = useState<boolean>(false);
+  const [msgExclusaoSucesso, setMsgExclusaoSucesso] = useState<string | null>(null);
+
+  // Executar exclusão de relatório duplicado selecionado
+  const handleConfirmarExclusao = async () => {
+    if (!relatorioParaExcluir) return;
+    const id = String(relatorioParaExcluir.ID || relatorioParaExcluir.id);
+    try {
+      setIsExcluindo(true);
+      await spService.excluirLancamento(id);
+      setMsgExclusaoSucesso(`Relatório ID #${id} excluído com sucesso!`);
+      setRelatorioParaExcluir(null);
+      // Recarrega os dados para atualizar a tabela e o modal
+      onRefresh();
+      setTimeout(() => setMsgExclusaoSucesso(null), 4000);
+    } catch (err: any) {
+      alert(`Erro ao excluir relatório: ${err?.message || 'Falha na comunicação'}`);
+    } finally {
+      setIsExcluindo(false);
+    }
+  };
 
   // Carregar células e membros diretamente do SharePoint / Cache
   const carregarCelulasEMembros = useCallback(async () => {
@@ -754,6 +776,22 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
               </button>
             </div>
 
+            {/* Feedback de Exclusão */}
+            {msgExclusaoSucesso && (
+              <div className="mx-4 sm:mx-6 mt-4 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between animate-fadeIn">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{msgExclusaoSucesso}</span>
+                </div>
+                <button
+                  onClick={() => setMsgExclusaoSucesso(null)}
+                  className="text-slate-400 hover:text-white text-xs p-1"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {/* Conteúdo com os Grupos de Duplicados */}
             <div className="p-4 sm:p-6 overflow-y-auto space-y-5 scrollbar-thin">
               {duplicadosInfo.grupos.length === 0 ? (
@@ -789,10 +827,15 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
 
                     {/* Lista dos relatórios duplicados lançados para essa célula naquela semana */}
                     <div className="mt-3 space-y-2">
-                      <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                        Relatórios encontrados nesta semana:
-                      </p>
-                      <div className="grid grid-cols-1 gap-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                          Escolha qual relatório deseja manter ou excluir:
+                        </p>
+                        <span className="text-[10px] text-rose-400 font-medium hidden sm:inline">
+                          Exclusão remove o registro duplicado do banco de dados
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2.5">
                         {grupo.relatorios.map((rel, rIdx) => {
                           const pix = rel.ValorOferta ?? rel.valorPix ?? 0;
                           const esp = rel.OfertaEspecie ?? rel.valorEspecie ?? 0;
@@ -805,26 +848,39 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                           return (
                             <div 
                               key={`rel-${idRel}-${rIdx}`}
-                              className="bg-[#1c2030] p-3 rounded-lg border border-slate-700/60 flex flex-wrap items-center justify-between gap-3 text-xs"
+                              className="bg-[#1c2030] p-3 rounded-lg border border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:border-slate-600 transition-colors"
                             >
-                              <div className="flex items-center gap-2.5">
-                                <div className="w-6 h-6 rounded-full bg-slate-700/70 text-slate-300 flex items-center justify-center font-bold text-[10px]">
+                              <div className="flex items-start sm:items-center gap-2.5">
+                                <div className="w-6 h-6 rounded-full bg-slate-700/70 text-slate-300 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5 sm:mt-0">
                                   {rIdx + 1}º
                                 </div>
                                 <div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-slate-200">ID: {String(idRel)}</span>
-                                    <span className="text-[11px] text-slate-400 font-mono">Data: {dataRel}</span>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-bold text-white font-mono bg-[#252b42] px-2 py-0.5 rounded text-[11px]">
+                                      ID: {String(idRel)}
+                                    </span>
+                                    <span className="text-[11px] text-slate-300 font-mono">
+                                      Data: {dataRel}
+                                    </span>
+                                    {isVal ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                        <CheckCircle className="w-3 h-3" /> Validado
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                                        <Clock className="w-3 h-3" /> Pendente
+                                      </span>
+                                    )}
                                   </div>
-                                  <p className="text-[11px] text-slate-400 mt-0.5">
-                                    Líder informado: <span className="text-slate-300">{lider}</span>
+                                  <p className="text-[11px] text-slate-400 mt-1">
+                                    Líder informado: <span className="text-slate-200 font-medium">{lider}</span>
                                   </p>
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-4">
-                                <div className="text-right">
-                                  <div className="font-mono font-bold text-slate-200">
+                              <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
+                                <div className="text-left sm:text-right">
+                                  <div className="font-mono font-black text-slate-100 text-xs sm:text-sm">
                                     Total: {formatBRL(total)}
                                   </div>
                                   <div className="text-[10px] text-slate-400 font-mono">
@@ -832,17 +888,15 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                                   </div>
                                 </div>
 
-                                <div className="pl-2 border-l border-slate-700">
-                                  {isVal ? (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded border border-emerald-500/20">
-                                      <CheckCircle className="w-3 h-3" /> Validado
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded border border-amber-500/20">
-                                      <Clock className="w-3 h-3" /> Pendente
-                                    </span>
-                                  )}
-                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setRelatorioParaExcluir({ ...rel, celulaNome: grupo.celulaNome, totalFormatado: formatBRL(total) })}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 hover:border-rose-600 transition-all font-semibold text-xs cursor-pointer shadow-xs shrink-0"
+                                  title="Excluir este relatório duplicado"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Excluir</span>
+                                </button>
                               </div>
                             </div>
                           );
@@ -853,6 +907,83 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 ))
               )}
             </div>
+
+            {/* Sub-modal de Confirmação de Exclusão */}
+            {relatorioParaExcluir && (
+              <div 
+                className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xs animate-fadeIn"
+                onClick={() => !isExcluindo && setRelatorioParaExcluir(null)}
+              >
+                <div 
+                  className="bg-[#1c2030] text-slate-100 rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-rose-500/50 space-y-4"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                      <Trash2 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-bold text-white">
+                        Excluir Relatório Duplicado?
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Esta ação removerá este lançamento do SharePoint e do fluxo.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#141724] p-3.5 rounded-xl border border-slate-700/80 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">ID do Relatório:</span>
+                      <span className="font-mono font-bold text-white">
+                        #{String(relatorioParaExcluir.ID || relatorioParaExcluir.id)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Célula:</span>
+                      <span className="font-semibold text-slate-200">
+                        {relatorioParaExcluir.celulaNome || relatorioParaExcluir.C_x00e9_lula || relatorioParaExcluir.Célula}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Valor Total:</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {relatorioParaExcluir.totalFormatado || formatBRL(relatorioParaExcluir.Total || relatorioParaExcluir.valorTotal || 0)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      disabled={isExcluindo}
+                      onClick={() => setRelatorioParaExcluir(null)}
+                      className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isExcluindo}
+                      onClick={handleConfirmarExclusao}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {isExcluindo ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Excluindo...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Sim, Excluir</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Rodapé do Modal */}
             <div className="p-4 border-t border-slate-700/80 bg-[#202538] flex justify-end">

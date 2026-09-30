@@ -5,7 +5,6 @@ export type ViewMode =
   | 'validar-relatorios'
   | 'indicador-trilho'
   | 'menu-admin'
-  | 'diagnostico'
   | 'login';
 
 export type SetorTipo = 
@@ -185,6 +184,8 @@ export interface MetricasTrilhoConjunto {
   totalMembros: number;
   percentualMedio: number;
   membrosCompletos: number;
+  membrosNaoCompletos?: number;
+  membrosComZero?: number;
   membrosEmAndamento: number;
   membrosNaoIniciados: number;
   etapasStats: EtapaStats[];

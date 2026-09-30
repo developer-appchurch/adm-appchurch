@@ -300,27 +300,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ['Safira', 'Fire', 'White', 'Black', 'Azul', 'Amarelo', 'Legacy', 'Onix', 'Diamante', 'Titanium'].forEach(s => todosSetores.add(s));
     }
 
-    const lista = Array.from(todosSetores).map(nome => {
-      const ativas = celulasAtivasPorSetor.get(nome) || 0;
-      const previstos = ativas * 4;
-      const entregues = entreguesPorSetor.get(nome) || 0;
+    const lista = Array.from(todosSetores)
+      .filter(nome => Boolean(nome) && (nome !== 'Sem Setor' || (celulasAtivasPorSetor.get(nome) || 0) > 0 || (entreguesPorSetor.get(nome) || 0) > 0))
+      .map(nome => {
+        const ativas = celulasAtivasPorSetor.get(nome) || 0;
+        const previstos = ativas * 4;
+        const entregues = entreguesPorSetor.get(nome) || 0;
 
-      let perc = 0;
-      if (previstos > 0 && entregues > 0) {
-        const proporcao = entregues / previstos;
-        perc = proporcao >= 1 ? 100 : Math.round(proporcao * 100);
-      } else if (previstos === 0 && entregues > 0) {
-        perc = 100;
-      }
+        let perc = 0;
+        if (previstos > 0 && entregues > 0) {
+          const proporcao = entregues / previstos;
+          perc = proporcao >= 1 ? 100 : Math.round(proporcao * 100);
+        } else if (previstos === 0 && entregues > 0) {
+          perc = 100;
+        }
 
-      return {
-        nome,
-        ativas,
-        previstos,
-        entregues,
-        perc
-      };
-    });
+        return {
+          nome,
+          ativas,
+          previstos,
+          entregues,
+          perc
+        };
+      });
 
     lista.sort((a, b) => b.perc - a.perc || b.entregues - a.entregues);
     return lista;

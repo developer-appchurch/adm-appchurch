@@ -899,15 +899,26 @@ export class SharePointService {
     return novo;
   }
 
-  public excluirLancamento(id: string): boolean {
+  public async excluirLancamento(id: string): Promise<boolean> {
+    const idStr = String(id);
     const antes = this.lancamentos.length;
-    this.lancamentos = this.lancamentos.filter(l => String(l.id) !== String(id));
+    this.lancamentos = this.lancamentos.filter(l => String(l.id) !== idStr && String((l as any).ID) !== idStr);
     if (this.lancamentos.length !== antes) {
       this.config.totalItensSincronizados = this.lancamentos.length;
       this.salvarDados();
+    }
+
+    try {
+      await fetch('/api/sharepoint/excluir-relatorio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: idStr })
+      });
+      return true;
+    } catch (e) {
+      console.warn('[SharePointService] Aviso ao sincronizar exclusão com servidor:', e);
       return true;
     }
-    return false;
   }
 
   /**

@@ -1175,13 +1175,14 @@ app.get("/api/sharepoint/indicador-trilho", async (req, res) => {
     const isConcluido = statusRaw === "OK" || statusRaw.includes("OK") || statusRaw === "1" || statusRaw === "TRUE" || statusRaw === "SIM" || statusRaw === "CONCLU\xCDDO" || statusRaw === "CONCLUIDO" || statusRaw === "CONCLU\xCDDA" || statusRaw === "CONCLUIDA" || !statusRaw;
     if (!isConcluido) return;
     const rawId = String(
-      mc.ID_membro || mc.ID_MEMBRO || mc.IdMembro || mc.ID_Membro || mc.Id_Membro || mc.id_membro || mc.MembroId || mc.Membro_ID || ""
+      mc.ID_membro || mc.ID_Lider || mc.ID_esp || mc.ID_MEMBRO || mc.IdMembro || mc.ID_Membro || mc.Id_Membro || mc.id_membro || mc.MembroId || mc.Membro_ID || ""
     ).trim();
     const rawNome = String(
       mc.NomeMembro || mc.Membro || mc.Title || mc.Nome || mc.Nome_Membro || ""
     ).trim().toLowerCase();
     const capNome = String(
-      mc.Capacitacao || mc.capacitacao || mc.NomeCapacitacao || mc.CAPACITACAO || mc.Etapa || mc.Title || ""
+      mc.Capacitacao || mc.capacitacao || mc.Bairro || // No SharePoint a coluna interna pode ser Bairro mas armazena a Capacitacao
+      mc.NomeCapacitacao || mc.CAPACITACAO || mc.Etapa || mc.Title || ""
     ).trim();
     if (!capNome) return;
     const etapaEncontrada = etapas.find(
@@ -1273,14 +1274,18 @@ app.get("/api/sharepoint/indicador-trilho", async (req, res) => {
       };
     });
     const membrosCompletos = listaMembros.filter((m) => m.statusTrilho === "Completo").length;
+    const membrosNaoCompletos = total - membrosCompletos;
+    const membrosComZero = listaMembros.filter((m) => m.etapasConcluidas.length === 0).length;
     const membrosEmAndamento = listaMembros.filter((m) => m.statusTrilho === "Em Andamento").length;
-    const membrosNaoIniciados = listaMembros.filter((m) => m.statusTrilho === "N\xE3o Iniciado").length;
+    const membrosNaoIniciados = membrosComZero;
     const somaPercentuais = listaMembros.reduce((acc, m) => acc + m.percentualConclusao, 0);
-    const percentualMedio = Math.round(somaPercentuais / total);
+    const percentualMedio = total > 0 ? parseFloat((somaPercentuais / total).toFixed(1)) : 0;
     return {
       totalMembros: total,
       percentualMedio,
       membrosCompletos,
+      membrosNaoCompletos,
+      membrosComZero,
       membrosEmAndamento,
       membrosNaoIniciados,
       etapasStats
@@ -1427,6 +1432,53 @@ app.post("/api/sharepoint/editar-relatorio", async (req, res) => {
     id,
     item
   });
+});
+var handleExcluirRelatorio = async (idParaExcluir, res) => {
+  const idStr = String(idParaExcluir).trim();
+  if (!idStr) {
+    return res.status(400).json({ sucesso: false, erro: "ID do relat\xF3rio n\xE3o informado" });
+  }
+  const store = PersistentCacheManager.getStore();
+  const relatorios = store.relatorios?.data || [];
+  const index = relatorios.findIndex((r) => String(r.ID || r.Id || r.id) === idStr);
+  let itemRemovido = null;
+  if (index !== -1) {
+    itemRemovido = relatorios.splice(index, 1)[0];
+    PersistentCacheManager.atualizarEntrada("relatorios", relatorios);
+  }
+  enqueueItemUpdate(idStr, async () => {
+    try {
+      const token = await getMicrosoftToken();
+      const spDeleteUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_Relatorio')/items(${idStr})`;
+      await fetch(spDeleteUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json;odata=verbose",
+          "X-HTTP-Method": "DELETE",
+          "IF-MATCH": "*"
+        }
+      });
+      console.log(`[SharePoint] \u2705 Relat\xF3rio ID ${idStr} exclu\xEDdo no SharePoint.`);
+    } catch (err) {
+      console.warn(`[SharePoint] Aviso ao excluir relat\xF3rio ID ${idStr} no SharePoint:`, err?.message);
+    }
+  }).catch((e) => console.warn("[SharePoint] Aviso na fila de exclus\xE3o:", e));
+  return res.json({
+    sucesso: true,
+    mensagem: `Relat\xF3rio ID ${idStr} exclu\xEDdo com sucesso.`,
+    id: idStr,
+    item: itemRemovido,
+    totalRestantes: (store.relatorios?.data || []).length
+  });
+};
+app.post("/api/sharepoint/excluir-relatorio", async (req, res) => {
+  const { id } = req.body;
+  return handleExcluirRelatorio(id, res);
+});
+app.delete("/api/sharepoint/relatorios/:id", async (req, res) => {
+  const { id } = req.params;
+  return handleExcluirRelatorio(id, res);
 });
 app.post("/api/sharepoint/sync", async (req, res) => {
   try {

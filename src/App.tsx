@@ -10,7 +10,6 @@ import { ValidarRelatoriosView } from './components/views/ValidarRelatoriosView'
 import { IndicadorTrilhoView } from './components/views/IndicadorTrilhoView';
 import { MenuAdminView } from './components/views/MenuAdminView';
 import { LoginView } from './components/views/LoginView';
-import { DiagnosticsView } from './components/views/DiagnosticsView';
 
 export default function App() {
   const spService = SharePointService.getInstance();
@@ -281,10 +280,6 @@ export default function App() {
 
           {currentView === 'indicador-trilho' && (
             <IndicadorTrilhoView />
-          )}
-
-          {currentView === 'diagnostico' && (
-            <DiagnosticsView />
           )}
         </main>
       </div>

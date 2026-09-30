@@ -1095,9 +1095,11 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
 
     if (!isConcluido) return;
 
-    // ID do membro que é igual à coluna ID da BD_membros
+    // ID do membro que corresponde ao ID da lista BD_membros (incluindo ID_Lider e ID_esp)
     const rawId = String(
       mc.ID_membro ||
+      mc.ID_Lider ||
+      mc.ID_esp ||
       mc.ID_MEMBRO || 
       mc.IdMembro || 
       mc.ID_Membro || 
@@ -1117,9 +1119,11 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
       ""
     ).trim().toLowerCase();
 
+    // Relacionamento: BD_Capacitacao - Coluna Capacitacao; BD_MembrosCapac - Capacitacao
     const capNome = String(
       mc.Capacitacao || 
       mc.capacitacao || 
+      mc.Bairro || // No SharePoint a coluna interna pode ser Bairro mas armazena a Capacitacao
       mc.NomeCapacitacao || 
       mc.CAPACITACAO || 
       mc.Etapa || 
@@ -1240,16 +1244,21 @@ app.get("/api/sharepoint/indicador-trilho", async (req: Request, res: Response) 
     });
 
     const membrosCompletos = listaMembros.filter(m => m.statusTrilho === 'Completo').length;
+    const membrosNaoCompletos = total - membrosCompletos;
+    const membrosComZero = listaMembros.filter(m => m.etapasConcluidas.length === 0).length;
     const membrosEmAndamento = listaMembros.filter(m => m.statusTrilho === 'Em Andamento').length;
-    const membrosNaoIniciados = listaMembros.filter(m => m.statusTrilho === 'Não Iniciado').length;
+    const membrosNaoIniciados = membrosComZero;
 
+    // Média de quantos % do trilho foi concluído de todos os membros dentro do escopo
     const somaPercentuais = listaMembros.reduce((acc, m) => acc + m.percentualConclusao, 0);
-    const percentualMedio = Math.round(somaPercentuais / total);
+    const percentualMedio = total > 0 ? parseFloat((somaPercentuais / total).toFixed(1)) : 0;
 
     return {
       totalMembros: total,
       percentualMedio,
       membrosCompletos,
+      membrosNaoCompletos,
+      membrosComZero,
       membrosEmAndamento,
       membrosNaoIniciados,
       etapasStats
@@ -1424,6 +1433,62 @@ app.post("/api/sharepoint/editar-relatorio", async (req: Request, res: Response)
     id,
     item
   });
+});
+
+// Excluir relatório (suporta tanto POST /api/sharepoint/excluir-relatorio quanto DELETE /api/sharepoint/relatorios/:id)
+const handleExcluirRelatorio = async (idParaExcluir: string | number, res: Response) => {
+  const idStr = String(idParaExcluir).trim();
+  if (!idStr) {
+    return res.status(400).json({ sucesso: false, erro: "ID do relatório não informado" });
+  }
+
+  // 1. Remover do cache persistente e atualizar entrada
+  const store = PersistentCacheManager.getStore();
+  const relatorios = store.relatorios?.data || [];
+  const index = relatorios.findIndex((r: any) => String(r.ID || r.Id || r.id) === idStr);
+  let itemRemovido = null;
+  if (index !== -1) {
+    itemRemovido = relatorios.splice(index, 1)[0];
+    PersistentCacheManager.atualizarEntrada("relatorios", relatorios);
+  }
+
+  // 2. Deletar no SharePoint via fila assíncrona
+  enqueueItemUpdate(idStr, async () => {
+    try {
+      const token = await getMicrosoftToken();
+      const spDeleteUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_Relatorio')/items(${idStr})`;
+      await fetch(spDeleteUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json;odata=verbose",
+          "X-HTTP-Method": "DELETE",
+          "IF-MATCH": "*"
+        }
+      });
+      console.log(`[SharePoint] ✅ Relatório ID ${idStr} excluído no SharePoint.`);
+    } catch (err: any) {
+      console.warn(`[SharePoint] Aviso ao excluir relatório ID ${idStr} no SharePoint:`, err?.message);
+    }
+  }).catch(e => console.warn("[SharePoint] Aviso na fila de exclusão:", e));
+
+  return res.json({
+    sucesso: true,
+    mensagem: `Relatório ID ${idStr} excluído com sucesso.`,
+    id: idStr,
+    item: itemRemovido,
+    totalRestantes: (store.relatorios?.data || []).length
+  });
+};
+
+app.post("/api/sharepoint/excluir-relatorio", async (req: Request, res: Response) => {
+  const { id } = req.body;
+  return handleExcluirRelatorio(id, res);
+});
+
+app.delete("/api/sharepoint/relatorios/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  return handleExcluirRelatorio(id, res);
 });
 
 // Forçar sincronização manual
