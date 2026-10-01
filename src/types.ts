@@ -121,6 +121,7 @@ export interface LancamentoTesouraria {
 export interface MovimentacaoFluxoCaixa {
   id: string | number;
   ID: string | number;
+  Title?: string | number;
   CategoriaFluxo: 'Entrada' | 'Saída' | string;
   TipoFluxo: 'Pix' | 'Espécie' | string;
   ValorFluxo: number;
@@ -128,6 +129,9 @@ export interface MovimentacaoFluxoCaixa {
   Id_Tesoureiro: string | number;
   StatusFluxo: 'OK' | 'Pendente' | string;
   DescricaoFluxo: string; // destino - motivo
+  ObservacaoFluxo?: string; // Coluna de observacao no SharePoint
+  ObservacoesFluxo?: string; // Coluna exata de observações no SharePoint (BD_FluxoCaixa)
+  NomeTesoureiro?: string; // Nome do membro tesoureiro vindo de BD_membros
 
   // Campos calculados e aliases para componentes
   data?: string; // YYYY-MM-DD
@@ -141,6 +145,7 @@ export interface MovimentacaoFluxoCaixa {
   formaPagamento?: string;
   valor?: number;
   observacao?: string;
+  nome_tesoureiro?: string;
   status?: string;
   origem?: string;
   saldoApos?: number;

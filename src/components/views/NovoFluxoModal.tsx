@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   PlusCircle, 
@@ -9,9 +9,9 @@ import {
   UserCheck, 
   CheckCircle2, 
   Clock, 
-  FileText,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Edit3
 } from 'lucide-react';
 import { MembroItem, MovimentacaoFluxoCaixa } from '../../types';
 
@@ -19,6 +19,7 @@ interface NovoFluxoModalProps {
   isOpen: boolean;
   onClose: () => void;
   usuarioLogado?: MembroItem | null;
+  itemParaEditar?: MovimentacaoFluxoCaixa | null;
   onSalvoComSucesso: (novoFluxo: MovimentacaoFluxoCaixa) => void;
 }
 
@@ -26,8 +27,11 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
   isOpen,
   onClose,
   usuarioLogado,
+  itemParaEditar,
   onSalvoComSucesso
 }) => {
+  const isEditing = Boolean(itemParaEditar);
+
   const [categoriaFluxo, setCategoriaFluxo] = useState<'Entrada' | 'Saída'>('Entrada');
   const [tipoFluxo, setTipoFluxo] = useState<'Pix' | 'Espécie'>('Pix');
   const [valorInput, setValorInput] = useState<string>('');
@@ -36,6 +40,58 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
   const [descricaoFluxo, setDescricaoFluxo] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [erroForm, setErroForm] = useState<string | null>(null);
+
+  // Inicializa os campos sempre que o modal abre ou o item para edição muda
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (itemParaEditar) {
+      const isSaida = 
+        itemParaEditar.tipo === 'SAIDA' || 
+        itemParaEditar.CategoriaFluxo === 'Saída' || 
+        itemParaEditar.categoria === 'Saída';
+      setCategoriaFluxo(isSaida ? 'Saída' : 'Entrada');
+
+      const isEspecie = 
+        String(itemParaEditar.TipoFluxo || itemParaEditar.formaPagamento || '').toLowerCase().includes('espécie') ||
+        String(itemParaEditar.TipoFluxo || itemParaEditar.formaPagamento || '').toLowerCase().includes('especie');
+      setTipoFluxo(isEspecie ? 'Espécie' : 'Pix');
+
+      const val = Number(itemParaEditar.ValorFluxo ?? itemParaEditar.valor ?? 0);
+      if (val > 0) {
+        setValorInput(new Intl.NumberFormat('pt-BR', {
+          style: 'currency',
+          currency: 'BRL'
+        }).format(val));
+      } else {
+        setValorInput('');
+      }
+
+      const dStr = itemParaEditar.DataFluxo || itemParaEditar.data || new Date().toISOString().split('T')[0];
+      setDataFluxo(dStr.slice(0, 10));
+
+      const isPend = String(itemParaEditar.StatusFluxo || itemParaEditar.status || '').toLowerCase().includes('pend');
+      setStatusFluxo(isPend ? 'Pendente' : 'OK');
+
+      setDescricaoFluxo(
+        itemParaEditar.ObservacoesFluxo || 
+        itemParaEditar.ObservacaoFluxo || 
+        itemParaEditar.DescricaoFluxo || 
+        itemParaEditar.descricao || 
+        itemParaEditar.observacao || 
+        ''
+      );
+    } else {
+      // Padrão para novo lançamento
+      setCategoriaFluxo('Entrada');
+      setTipoFluxo('Pix');
+      setValorInput('');
+      setDataFluxo(new Date().toISOString().split('T')[0]);
+      setStatusFluxo('OK');
+      setDescricaoFluxo('');
+    }
+    setErroForm(null);
+  }, [isOpen, itemParaEditar]);
 
   if (!isOpen) return null;
 
@@ -70,12 +126,12 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
     }
 
     if (!dataFluxo) {
-      setErroForm('Por favor, selecione a data do fluxo de caixa.');
+      setErroForm('Por favor, selecione a data da movimentação.');
       return;
     }
 
     if (!descricaoFluxo.trim()) {
-      setErroForm('Por favor, informe a descrição (destino / motivo) do fluxo de caixa.');
+      setErroForm('Por favor, informe a descrição (destino / motivo) do lançamento.');
       return;
     }
 
@@ -90,11 +146,19 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
         DataFluxo: dataFluxo,
         Id_Tesoureiro: idTesoureiroFinal,
         StatusFluxo: statusFluxo,
-        DescricaoFluxo: descricaoFluxo.trim()
+        DescricaoFluxo: descricaoFluxo.trim(),
+        ObservacaoFluxo: descricaoFluxo.trim(),
+        ObservacoesFluxo: descricaoFluxo.trim()
       };
 
-      const res = await fetch('/api/sharepoint/fluxo-caixa', {
-        method: 'POST',
+      const url = isEditing && itemParaEditar
+        ? `/api/sharepoint/fluxo-caixa/${itemParaEditar.id || itemParaEditar.ID}`
+        : '/api/sharepoint/fluxo-caixa';
+
+      const method = isEditing ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
@@ -102,7 +166,7 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.sucesso) {
-        throw new Error(data?.erro || 'Erro ao gravar na tabela BD_FluxoCaixa.');
+        throw new Error(data?.erro || 'Erro ao processar lançamento no SharePoint.');
       }
 
       // Sucesso
@@ -133,14 +197,14 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
         <div className="px-5 py-4 border-b border-[#262d44] flex items-center justify-between bg-[#151825]">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-              <PlusCircle className="w-5 h-5" />
+              {isEditing ? <Edit3 className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
             </div>
             <div>
               <h2 className="text-base font-bold text-white leading-tight">
-                Novo Fluxo de Caixa
+                {isEditing ? 'Editar Lançamento' : 'Novo Lançamento'}
               </h2>
               <p className="text-[11px] text-slate-400">
-                Cadastro de entrada e saída financeira
+                {isEditing ? 'Atualizar detalhes da movimentação' : 'Registrar entrada ou saída financeira'}
               </p>
             </div>
           </div>
@@ -168,7 +232,7 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
           {/* 1. Escolha da Categoria (Entrada / Saída) */}
           <div>
             <label className="block text-slate-300 font-bold mb-1.5">
-              Categoria do Fluxo
+              Categoria do Lançamento
             </label>
             <div className="grid grid-cols-2 gap-2.5">
               <button
@@ -354,12 +418,12 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Salvando Movimentação...</span>
+                  <span>{isEditing ? 'Salvando Alterações...' : 'Salvando Lançamento...'}</span>
                 </>
               ) : (
                 <>
-                  <PlusCircle className="w-4 h-4" />
-                  <span>Cadastrar Fluxo</span>
+                  {isEditing ? <Edit3 className="w-4 h-4" /> : <PlusCircle className="w-4 h-4" />}
+                  <span>{isEditing ? 'Salvar Alterações' : 'Cadastrar Lançamento'}</span>
                 </>
               )}
             </button>
@@ -369,3 +433,4 @@ export const NovoFluxoModal: React.FC<NovoFluxoModalProps> = ({
     </div>
   );
 };
+

@@ -14,7 +14,11 @@ import {
   Wallet,
   CheckCircle2,
   PlusCircle,
-  Plus
+  Plus,
+  Edit2,
+  Trash2,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -63,6 +67,12 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   const [movimentacoes, setMovimentacoes] = useState<MovimentacaoFluxoCaixa[]>(MOVIMENTACOES_INICIAIS_FLUXO_CAIXA);
   const [loading, setLoading] = useState<boolean>(false);
   const [isNovoFluxoModalOpen, setIsNovoFluxoModalOpen] = useState<boolean>(false);
+  const [itemEmEdicao, setItemEmEdicao] = useState<MovimentacaoFluxoCaixa | null>(null);
+  const [itemParaExcluir, setItemParaExcluir] = useState<MovimentacaoFluxoCaixa | null>(null);
+  const [isExcluindo, setIsExcluindo] = useState<boolean>(false);
+  const [membrosMap, setMembrosMap] = useState<Record<string, string>>({
+    '4': 'Junio Fonteles'
+  });
   
   // Filtros principais
   const [ano, setAno] = useState<number>(anoSelecionado);
@@ -86,7 +96,9 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   const carregarFluxoCaixa = useCallback(async (force = false) => {
     setLoading(true);
     try {
-      const resp = await fetch(`/api/sharepoint/fluxo-caixa${force ? '?force=true' : ''}`);
+      const resp = await fetch(`/api/sharepoint/fluxo-caixa?force=${force ? 'true' : 'false'}&_t=${Date.now()}`, {
+        headers: { 'Cache-Control': 'no-cache' }
+      });
       if (resp.ok) {
         const data = await resp.json();
         if (data && Array.isArray(data.movimentacoes)) {
@@ -106,6 +118,26 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   useEffect(() => {
     carregarFluxoCaixa();
   }, [carregarFluxoCaixa]);
+
+  // Carrega mapa de membros da tabela BD_membros para resolução de nomes
+  useEffect(() => {
+    fetch('/api/sharepoint/membros')
+      .then(r => r.json())
+      .then(d => {
+        if (d && Array.isArray(d.membros)) {
+          const map: Record<string, string> = { '4': 'Junio Fonteles' };
+          d.membros.forEach((mb: any) => {
+            const id = String(mb.id || mb.ID || mb.Title || '').trim();
+            const nome = String(mb.nome || mb.Nome || mb.Title || '').trim();
+            if (id && nome && isNaN(Number(nome))) {
+              map[id] = nome;
+            }
+          });
+          setMembrosMap(prev => ({ ...prev, ...map }));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Formatação em Reais (BRL)
   const formatBRL = (val: number) => {
@@ -221,7 +253,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
       // Busca textual por descrição, tipo, etc.
       if (buscaTexto.trim() !== '') {
         const query = buscaTexto.toLowerCase().trim();
-        const desc = (item.DescricaoFluxo || item.descricao || '').toLowerCase();
+        const desc = (item.ObservacoesFluxo || item.ObservacaoFluxo || item.DescricaoFluxo || item.descricao || item.observacao || '').toLowerCase();
         const cat = (item.CategoriaFluxo || item.categoria || '').toLowerCase();
         const tp = (item.TipoFluxo || item.formaPagamento || '').toLowerCase();
         const status = (item.StatusFluxo || item.status || '').toLowerCase();
@@ -257,9 +289,60 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     setPaginaAtual(1);
   };
 
-  const handleNovoFluxoSalvo = (novoFluxo: MovimentacaoFluxoCaixa) => {
-    setMovimentacoes(prev => [novoFluxo, ...prev]);
+  const handleNovoLancamento = () => {
+    setItemEmEdicao(null);
+    setIsNovoFluxoModalOpen(true);
+  };
+
+  const handleEditar = (item: MovimentacaoFluxoCaixa) => {
+    setItemEmEdicao(item);
+    setIsNovoFluxoModalOpen(true);
+  };
+
+  const handleNovoFluxoSalvo = (fluxoSalvo: MovimentacaoFluxoCaixa) => {
+    setMovimentacoes(prev => {
+      const idx = prev.findIndex(m => 
+        String(m.id) === String(fluxoSalvo.id) || 
+        String(m.ID) === String(fluxoSalvo.ID) || 
+        String(m.Title) === String(fluxoSalvo.Title)
+      );
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = fluxoSalvo;
+        return copy;
+      }
+      return [fluxoSalvo, ...prev];
+    });
+    setItemEmEdicao(null);
     carregarFluxoCaixa(true);
+  };
+
+  const handleConfirmarExcluir = async () => {
+    if (!itemParaExcluir) return;
+    setIsExcluindo(true);
+    try {
+      const idParaRemover = itemParaExcluir.id || itemParaExcluir.ID;
+      const res = await fetch(`/api/sharepoint/fluxo-caixa/${idParaRemover}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setMovimentacoes(prev => prev.filter(m => 
+          String(m.id) !== String(idParaRemover) && 
+          String(m.ID) !== String(idParaRemover) && 
+          String(m.Title) !== String(idParaRemover)
+        ));
+        setItemParaExcluir(null);
+        carregarFluxoCaixa(true);
+      } else {
+        const data = await res.json().catch(() => null);
+        alert(data?.erro || 'Erro ao excluir o lançamento.');
+      }
+    } catch (err) {
+      console.error('[FluxoCaixaView] Erro ao excluir:', err);
+      alert('Falha de conexão ao excluir o lançamento.');
+    } finally {
+      setIsExcluindo(false);
+    }
   };
 
   const exportarExcel = () => {
@@ -273,15 +356,84 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   return (
     <div id="fluxo-caixa-container" className="p-3.5 sm:p-6 space-y-5 max-w-[1600px] mx-auto text-slate-100">
       
-      {/* Modal de Cadastro de Novo Fluxo */}
+      {/* Modal de Cadastro / Edição de Lançamento */}
       <NovoFluxoModal
         isOpen={isNovoFluxoModalOpen}
-        onClose={() => setIsNovoFluxoModalOpen(false)}
+        onClose={() => {
+          setIsNovoFluxoModalOpen(false);
+          setItemEmEdicao(null);
+        }}
         usuarioLogado={usuarioLogado}
+        itemParaEditar={itemEmEdicao}
         onSalvoComSucesso={handleNovoFluxoSalvo}
       />
 
-      {/* Barra Superior de Seleção de Período e Botão Novo Fluxo */}
+      {/* Modal de Confirmação de Exclusão */}
+      {itemParaExcluir && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-[#181c2b] border border-rose-500/40 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden p-5 text-slate-100 animate-in zoom-in-95">
+            <div className="flex items-center gap-3 text-rose-400 mb-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-950/80 border border-rose-500/50 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Excluir Lançamento</h3>
+                <p className="text-xs text-slate-400">Esta ação removerá o registro do sistema e do SharePoint.</p>
+              </div>
+            </div>
+
+            <div className="bg-[#111420] border border-[#272f47] rounded-xl p-3.5 my-4 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-400">ID:</span>
+                <span className="font-mono font-bold text-indigo-400">#{itemParaExcluir.ID || itemParaExcluir.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Valor:</span>
+                <span className="font-mono font-bold text-white">{formatBRL(itemParaExcluir.ValorFluxo ?? itemParaExcluir.valor ?? 0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Categoria:</span>
+                <span className="font-bold text-slate-200">{itemParaExcluir.CategoriaFluxo || itemParaExcluir.categoria}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Descrição:</span>
+                <span className="text-slate-300 font-medium truncate max-w-[200px]">{itemParaExcluir.ObservacoesFluxo || itemParaExcluir.ObservacaoFluxo || itemParaExcluir.DescricaoFluxo || itemParaExcluir.descricao}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setItemParaExcluir(null)}
+                disabled={isExcluindo}
+                className="px-4 py-2 rounded-xl bg-[#202538] hover:bg-[#2c334d] text-slate-300 font-bold text-xs transition-colors cursor-pointer border border-[#303954]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmarExcluir}
+                disabled={isExcluindo}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                {isExcluindo ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Excluindo...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirmar Exclusão</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Barra Superior de Seleção de Período e Botão Novo Lançamento */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-[#161a29] border border-[#272d42] p-3.5 sm:p-4 rounded-2xl shadow-lg">
         <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
@@ -297,17 +449,17 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
           </div>
         </div>
 
-        {/* Seletores de Ano e Mês + Botão Novo Fluxo */}
+        {/* Seletores de Ano e Mês + Botão Novo Lançamento */}
         <div className="flex items-center flex-wrap gap-2 sm:gap-3 ml-auto">
-          {/* Botão Novo Fluxo */}
+          {/* Botão Novo Lançamento */}
           <button
-            id="btn-novo-fluxo"
-            onClick={() => setIsNovoFluxoModalOpen(true)}
+            id="btn-novo-lancamento"
+            onClick={handleNovoLancamento}
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md shadow-indigo-600/30 transition-all cursor-pointer"
-            title="Cadastrar Novo Fluxo de Caixa"
+            title="Cadastrar Novo Lançamento"
           >
             <PlusCircle className="w-4 h-4" />
-            <span>Novo Fluxo</span>
+            <span>Novo Lançamento</span>
           </button>
 
           {/* Seletor de Ano */}
@@ -656,24 +808,25 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
                 <th className="py-3 px-4">Tesoureiro</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Valor (R$)</th>
+                <th className="py-3 px-4 text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1e2335]">
               {movimentacoesPaginadas.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                  <td colSpan={9} className="py-12 text-center text-slate-400">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Wallet className="w-8 h-8 text-slate-500 stroke-1" />
                       <p className="font-semibold text-sm text-slate-300">Nenhum fluxo de caixa registrado ainda.</p>
                       <p className="text-xs text-slate-500 max-w-sm">
-                        Clique no botão "Novo Fluxo" para cadastrar sua primeira movimentação financeira.
+                        Clique no botão "Novo Lançamento" para cadastrar sua primeira movimentação financeira.
                       </p>
                       <button
-                        onClick={() => setIsNovoFluxoModalOpen(true)}
+                        onClick={handleNovoLancamento}
                         className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
                       >
                         <PlusCircle className="w-4 h-4" />
-                        <span>Cadastrar Primeiro Fluxo</span>
+                        <span>Cadastrar Primeiro Lançamento</span>
                       </button>
                     </div>
                   </td>
@@ -684,9 +837,14 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
                   const valorExibicao = m.ValorFluxo ?? m.valor ?? 0;
                   const dataExibicao = m.dataBR || (m.DataFluxo ? m.DataFluxo.split('-').reverse().join('/') : m.data);
                   const tipoPagamento = m.TipoFluxo || m.formaPagamento || 'Pix';
-                  const descricaoExibicao = m.DescricaoFluxo || m.descricao || '-';
+                  const descricaoExibicao = m.ObservacoesFluxo || m.ObservacaoFluxo || m.observacao || m.DescricaoFluxo || m.descricao || '-';
                   const statusExibicao = m.StatusFluxo || m.status || 'OK';
-                  const idTesoureiroExibicao = m.Id_Tesoureiro || 4;
+                  const idTesoureiroExibicao = String(m.Id_Tesoureiro || '4').trim();
+                  const nomeTesoureiroExibicao = 
+                    m.NomeTesoureiro || 
+                    m.nome_tesoureiro || 
+                    membrosMap[idTesoureiroExibicao] || 
+                    (idTesoureiroExibicao === '4' ? 'Junio Fonteles' : (usuarioLogado?.nome || 'Junio Fonteles'));
 
                   return (
                     <tr key={`${m.id}-${idx}`} className="hover:bg-[#1b2031] transition-colors">
@@ -723,8 +881,8 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
                       <td className="py-3 px-4 font-medium text-slate-100 min-w-[220px]">
                         <div>{descricaoExibicao}</div>
                       </td>
-                      <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
-                        ID: {idTesoureiroExibicao}
+                      <td className="py-3 px-4 font-medium text-slate-200 whitespace-nowrap">
+                        <span className="text-xs text-slate-200">{nomeTesoureiroExibicao}</span>
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold ${
@@ -740,6 +898,24 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
                         isEntrada ? 'text-emerald-400' : 'text-rose-400'
                       }`}>
                         {isEntrada ? `+ ${formatBRL(valorExibicao)}` : `- ${formatBRL(valorExibicao)}`}
+                      </td>
+                      <td className="py-3 px-4 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => handleEditar(m)}
+                            className="p-1.5 rounded-lg bg-indigo-900/30 hover:bg-indigo-600/40 text-indigo-300 hover:text-white border border-indigo-500/30 transition-all cursor-pointer"
+                            title="Editar Lançamento"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setItemParaExcluir(m)}
+                            className="p-1.5 rounded-lg bg-rose-900/30 hover:bg-rose-600/40 text-rose-300 hover:text-white border border-rose-500/30 transition-all cursor-pointer"
+                            title="Excluir Lançamento"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -1052,7 +1052,20 @@ app.get("/api/sharepoint/membros-capac", async (req: Request, res: Response) => 
 // Obter movimentações da tabela BD_FluxoCaixa (com SWR)
 app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
-  const items = await carregarFluxoCaixaCompleto(force);
+  const [items, membros] = await Promise.all([
+    carregarFluxoCaixaCompleto(force),
+    carregarMembrosCompleto(false).catch(() => [])
+  ]);
+
+  // Mapa de IDs para nomes dos membros da tabela BD_membros
+  const mapaMembros = new Map<string, string>();
+  (membros || []).forEach((m: any) => {
+    const id = String(m.id || m.ID || m.Title || '').trim();
+    const nome = String(m.nome || m.Nome || m.Title || '').trim();
+    if (id && nome && isNaN(Number(nome))) {
+      mapaMembros.set(id, nome);
+    }
+  });
 
   // Normalização estrita das colunas da tabela BD_FluxoCaixa
   const movimentacoes = (items || []).map((item: any, idx: number) => {
@@ -1087,8 +1100,41 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     );
 
     const idTesoureiro = item.Id_Tesoureiro || item.ID_TESOUREIRO || item.IdTesoureiro || 4;
+    const idTesoureiroStr = String(idTesoureiro).trim();
+    
+    // Resolve o nome do membro a partir de BD_membros
+    let nomeTesoureiro = 
+      item.NomeTesoureiro || 
+      item.nome_tesoureiro || 
+      item.Nome_Tesoureiro || 
+      mapaMembros.get(idTesoureiroStr) || 
+      '';
+
+    if (!nomeTesoureiro) {
+      if (idTesoureiroStr === '4') {
+        nomeTesoureiro = 'Junio Fonteles';
+      } else {
+        nomeTesoureiro = 'Tesouraria';
+      }
+    }
+
     const statusFluxo = String(item.StatusFluxo || item.Status || 'OK').trim();
-    const descricaoFluxo = item.DescricaoFluxo || item.Descricao || item.Observacao || item.Motivo || (item.Title && isNaN(Number(item.Title)) ? item.Title : '') || `Movimentação #${item.ID || item.Id || (idx + 1)}`;
+    const descricaoFluxo = 
+      item.ObservacoesFluxo || 
+      item.ObservacaoFluxo || 
+      item.Observacoes || 
+      item.Observacao || 
+      item.DescricaoFluxo || 
+      item.Descricao || 
+      item.Motivo || 
+      item.Historico || 
+      item.Destino || 
+      item.OData__x004f_bservacoesFluxo || 
+      item.OData__x004f_bservacaoFluxo || 
+      item.OData__x004f_bservacoes || 
+      item.OData__x004f_bservacao || 
+      (item.Title && isNaN(Number(item.Title)) ? item.Title : '') || 
+      '-';
 
     const idVal = item.ID || item.Id || item.Title || (idx + 1);
 
@@ -1100,8 +1146,12 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
       ValorFluxo: valorNum,
       DataFluxo: dataStr,
       Id_Tesoureiro: idTesoureiro,
+      NomeTesoureiro: nomeTesoureiro,
+      nome_tesoureiro: nomeTesoureiro,
       StatusFluxo: statusFluxo,
       DescricaoFluxo: descricaoFluxo,
+      ObservacaoFluxo: descricaoFluxo,
+      ObservacoesFluxo: descricaoFluxo,
 
       // Aliases para cálculos dos cards e componentes
       data: dataStr,
@@ -1121,7 +1171,9 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     };
   });
 
-  res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   res.json({
     sucesso: true,
     total: movimentacoes.length,
@@ -1194,6 +1246,8 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
       Id_Tesoureiro: tesoureiroFinal,
       StatusFluxo: statusFinal,
       DescricaoFluxo: descricaoFinal,
+      ObservacaoFluxo: descricaoFinal,
+      ObservacoesFluxo: descricaoFinal,
       
       // Aliases
       data: dataFinal,
@@ -1336,6 +1390,8 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
           spPayload.Id_Tesoureiro = String(tesoureiroFinal);
           spPayload.StatusFluxo = statusFinal;
           spPayload.DescricaoFluxo = descricaoFinal;
+          spPayload.ObservacaoFluxo = descricaoFinal;
+          spPayload.ObservacoesFluxo = descricaoFinal;
         }
 
         console.log("[SharePoint POST BD_FluxoCaixa] Payload a enviar:", JSON.stringify(spPayload));
@@ -1429,6 +1485,232 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     return res.status(500).json({
       sucesso: false,
       erro: err?.message || "Erro interno ao cadastrar fluxo de caixa."
+    });
+  }
+});
+
+// Atualizar lançamento existente na tabela BD_FluxoCaixa
+app.put("/api/sharepoint/fluxo-caixa/:id", async (req: Request, res: Response) => {
+  try {
+    const idParam = req.params.id;
+    const { 
+      CategoriaFluxo, 
+      TipoFluxo, 
+      ValorFluxo, 
+      DataFluxo, 
+      Id_Tesoureiro, 
+      StatusFluxo, 
+      DescricaoFluxo 
+    } = req.body;
+
+    const valorNum = Number(ValorFluxo || 0);
+    if (isNaN(valorNum) || valorNum <= 0) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "Por favor, informe um valor válido em R$ para o fluxo de caixa."
+      });
+    }
+
+    const dataFinal = String(DataFluxo || new Date().toISOString().split('T')[0]).trim();
+    const dObj = new Date(dataFinal + 'T12:00:00');
+    const ano = !isNaN(dObj.getFullYear()) ? dObj.getFullYear() : new Date().getFullYear();
+    const mes = !isNaN(dObj.getMonth()) ? dObj.getMonth() + 1 : new Date().getMonth() + 1;
+    const dia = !isNaN(dObj.getDate()) ? dObj.getDate() : new Date().getDate();
+
+    const categoriaFinal = String(CategoriaFluxo || 'Entrada').trim() === 'Saída' ? 'Saída' : 'Entrada';
+    const tipoFinal = String(TipoFluxo || 'Pix').trim() === 'Espécie' ? 'Espécie' : 'Pix';
+    const statusFinal = String(StatusFluxo || 'OK').trim() === 'Pendente' ? 'Pendente' : 'OK';
+    const descricaoFinal = String(DescricaoFluxo || '').trim();
+    const tesoureiroFinal = Id_Tesoureiro || 4;
+
+    const fluxoExistente: any[] = cache.fluxoCaixa || [];
+    const index = fluxoExistente.findIndex(f => 
+      String(f.id) === String(idParam) || 
+      String(f.ID) === String(idParam) || 
+      String(f.Title) === String(idParam)
+    );
+
+    const itemOriginal = index >= 0 ? fluxoExistente[index] : null;
+    const idItem = itemOriginal?.id || itemOriginal?.ID || idParam;
+
+    const itemAtualizado = {
+      ...(itemOriginal || {}),
+      id: idItem,
+      ID: idItem,
+      Title: String(idItem),
+      CategoriaFluxo: categoriaFinal,
+      TipoFluxo: tipoFinal,
+      ValorFluxo: valorNum,
+      DataFluxo: dataFinal,
+      Id_Tesoureiro: tesoureiroFinal,
+      StatusFluxo: statusFinal,
+      DescricaoFluxo: descricaoFinal,
+      ObservacaoFluxo: descricaoFinal,
+      ObservacoesFluxo: descricaoFinal,
+      
+      // Aliases
+      data: dataFinal,
+      dataBR: `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`,
+      ano,
+      mes,
+      dia,
+      tipo: categoriaFinal === 'Saída' ? 'SAIDA' : 'ENTRADA',
+      categoria: categoriaFinal,
+      formaPagamento: tipoFinal,
+      valor: valorNum,
+      status: statusFinal,
+      descricao: descricaoFinal,
+      observacao: descricaoFinal,
+      Atualizado: new Date().toISOString()
+    };
+
+    if (index >= 0) {
+      fluxoExistente[index] = itemAtualizado;
+    } else {
+      fluxoExistente.unshift(itemAtualizado);
+    }
+    cache.fluxoCaixa = [...fluxoExistente];
+
+    // Atualiza no SharePoint
+    let sharePointAtualizado = false;
+    try {
+      const token = await getMicrosoftToken().catch(() => null);
+      if (token) {
+        let requestDigest = "";
+        try {
+          const contextRes = await fetch(`${SP_SITE_URL}/_api/contextinfo`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json;odata=verbose",
+              "Content-Type": "application/json;odata=verbose"
+            }
+          });
+          if (contextRes.ok) {
+            const contextData = await contextRes.json();
+            requestDigest = contextData?.d?.GetContextWebInformation?.FormDigestValue || "";
+          }
+        } catch {}
+
+        const spItemId = Number(String(idItem).replace(/\D/g, '')) || idItem;
+        const listUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/items(${spItemId})`;
+
+        const spPayload: Record<string, any> = {
+          CategoriaFluxo: categoriaFinal,
+          TipoFluxo: tipoFinal,
+          ValorFluxo: valorNum,
+          DataFluxo: dataFinal,
+          Id_Tesoureiro: String(tesoureiroFinal),
+          StatusFluxo: statusFinal,
+          DescricaoFluxo: descricaoFinal,
+          ObservacaoFluxo: descricaoFinal,
+          ObservacoesFluxo: descricaoFinal
+        };
+
+        const patchRes = await fetch(listUrl, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Accept": "application/json;odata=nometadata",
+            "Content-Type": "application/json;odata=nometadata",
+            "X-HTTP-Method": "MERGE",
+            "IF-MATCH": "*",
+            ...(requestDigest ? { "X-RequestDigest": requestDigest } : {})
+          },
+          body: JSON.stringify(spPayload)
+        });
+
+        if (patchRes.ok) {
+          sharePointAtualizado = true;
+          console.log(`[BD_FluxoCaixa] ✏️ Item #${idItem} atualizado com sucesso no SharePoint!`);
+        }
+      }
+    } catch (spErr) {
+      console.warn("[BD_FluxoCaixa] Aviso ao atualizar item no SharePoint:", spErr);
+    }
+
+    return res.json({
+      sucesso: true,
+      mensagem: "Lançamento atualizado com sucesso!",
+      sharePointAtualizado,
+      item: itemAtualizado
+    });
+  } catch (err: any) {
+    console.error("[BD_FluxoCaixa] ❌ Erro ao atualizar fluxo:", err);
+    return res.status(500).json({
+      sucesso: false,
+      erro: err?.message || "Erro interno ao atualizar fluxo de caixa."
+    });
+  }
+});
+
+// Excluir lançamento da tabela BD_FluxoCaixa
+app.delete("/api/sharepoint/fluxo-caixa/:id", async (req: Request, res: Response) => {
+  try {
+    const idParam = req.params.id;
+    const fluxoExistente: any[] = cache.fluxoCaixa || [];
+    
+    // Remove da memória/cache local
+    const novaLista = fluxoExistente.filter(f => 
+      String(f.id) !== String(idParam) && 
+      String(f.ID) !== String(idParam) && 
+      String(f.Title) !== String(idParam)
+    );
+    cache.fluxoCaixa = novaLista;
+
+    // Tenta excluir no SharePoint
+    let sharePointExcluido = false;
+    try {
+      const token = await getMicrosoftToken().catch(() => null);
+      if (token) {
+        let requestDigest = "";
+        try {
+          const contextRes = await fetch(`${SP_SITE_URL}/_api/contextinfo`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json;odata=verbose",
+              "Content-Type": "application/json;odata=verbose"
+            }
+          });
+          if (contextRes.ok) {
+            const contextData = await contextRes.json();
+            requestDigest = contextData?.d?.GetContextWebInformation?.FormDigestValue || "";
+          }
+        } catch {}
+
+        const spItemId = Number(String(idParam).replace(/\D/g, '')) || idParam;
+        const listUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/items(${spItemId})`;
+
+        const deleteRes = await fetch(listUrl, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "X-HTTP-Method": "DELETE",
+            "IF-MATCH": "*",
+            ...(requestDigest ? { "X-RequestDigest": requestDigest } : {})
+          }
+        });
+
+        if (deleteRes.ok) {
+          sharePointExcluido = true;
+          console.log(`[BD_FluxoCaixa] 🗑️ Item #${idParam} excluído do SharePoint!`);
+        }
+      }
+    } catch (spErr) {
+      console.warn("[BD_FluxoCaixa] Aviso ao excluir item no SharePoint:", spErr);
+    }
+
+    return res.json({
+      sucesso: true,
+      mensagem: "Lançamento excluído com sucesso!",
+      sharePointExcluido
+    });
+  } catch (err: any) {
+    console.error("[BD_FluxoCaixa] ❌ Erro ao excluir fluxo:", err);
+    return res.status(500).json({
+      sucesso: false,
+      erro: err?.message || "Erro interno ao excluir fluxo de caixa."
     });
   }
 });
