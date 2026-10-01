@@ -1088,9 +1088,9 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
 
     const idTesoureiro = item.Id_Tesoureiro || item.ID_TESOUREIRO || item.IdTesoureiro || 4;
     const statusFluxo = String(item.StatusFluxo || item.Status || 'OK').trim();
-    const descricaoFluxo = item.DescricaoFluxo || item.Descricao || item.Title || item.Motivo || '';
+    const descricaoFluxo = item.DescricaoFluxo || item.Descricao || item.Observacao || item.Motivo || (item.Title && isNaN(Number(item.Title)) ? item.Title : '') || `Movimentação #${item.ID || item.Id || (idx + 1)}`;
 
-    const idVal = item.ID || item.Id || `fc-${idx + 1}`;
+    const idVal = item.ID || item.Id || item.Title || (idx + 1);
 
     return {
       id: idVal,
@@ -1165,10 +1165,17 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     // Obtém lista existente em cache
     const fluxoExistente: any[] = cache.fluxoCaixa || [];
     
-    // Gera ID sequencial numérico
+    // Gera ID sequencial numérico único incremental (1, 2, 3...)
     let proximoId = 1;
     if (fluxoExistente.length > 0) {
-      const idsNumericos = fluxoExistente.map(f => Number(f.ID || f.Id || 0)).filter(n => !isNaN(n));
+      const idsNumericos = fluxoExistente
+        .map(f => {
+          const rawVal = f.ID ?? f.Id ?? f.Title ?? f.id;
+          const num = Number(String(rawVal).replace(/\D/g, ''));
+          return !isNaN(num) && num > 0 ? num : 0;
+        })
+        .filter(n => n > 0);
+
       if (idsNumericos.length > 0) {
         proximoId = Math.max(...idsNumericos) + 1;
       } else {
@@ -1179,7 +1186,7 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     const novoItem = {
       id: proximoId,
       ID: proximoId,
-      Title: descricaoFinal || `Fluxo #${proximoId}`,
+      Title: String(proximoId),
       CategoriaFluxo: categoriaFinal,
       TipoFluxo: tipoFinal,
       ValorFluxo: valorNum,
@@ -1208,45 +1215,213 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     const listaAtualizada = [novoItem, ...fluxoExistente];
     cache.fluxoCaixa = listaAtualizada;
 
-    // 2. Tenta persistir no SharePoint Microsoft 365 (se houver credenciais e permissão na lista)
+    // 2. Persiste na lista BD_FluxoCaixa do SharePoint via Microsoft 365 REST API
+    let sharePointGravado = false;
+    let sharePointDetalhe = "";
+
     try {
       const token = await getMicrosoftToken().catch(() => null);
       if (token) {
-        const urlLista = await getSharePointListUrl("BD_FluxoCaixa", token, false).catch(() => null);
-        if (urlLista) {
-          const endpointPost = urlLista.split('?')[0];
-          await fetch(endpointPost, {
-            method: 'POST',
+        // Obtém o RequestDigest para permitir gravação segura no SharePoint
+        let requestDigest = "";
+        try {
+          const contextRes = await fetch(`${SP_SITE_URL}/_api/contextinfo`, {
+            method: "POST",
             headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/json;odata=verbose',
-              'Content-Type': 'application/json;odata=verbose'
-            },
-            body: JSON.stringify({
-              __metadata: { type: 'SP.Data.BD_x005f_FluxoCaixaListItem' },
-              Title: descricaoFinal,
-              CategoriaFluxo: categoriaFinal,
-              TipoFluxo: tipoFinal,
-              ValorFluxo: valorNum,
-              DataFluxo: dataFinal,
-              Id_Tesoureiro: String(tesoureiroFinal),
-              StatusFluxo: statusFinal,
-              DescricaoFluxo: descricaoFinal
-            })
-          }).catch(err => {
-            console.warn('[SharePoint POST BD_FluxoCaixa] Aviso ao enviar para SharePoint:', err?.message);
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json;odata=verbose",
+              "Content-Type": "application/json;odata=verbose"
+            }
           });
+          if (contextRes.ok) {
+            const contextData = await contextRes.json();
+            requestDigest = contextData?.d?.GetContextWebInformation?.FormDigestValue || "";
+          }
+        } catch (ctxErr) {
+          console.warn("[SharePoint contextinfo] Falha ao obter digest:", ctxErr);
+        }
+
+        // Descobre o endpoint correto e o ListItemEntityTypeFullName da lista BD_FluxoCaixa
+        let listUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/items`;
+        let entityType = "SP.Data.BD_x005f_FluxoCaixaListItem";
+
+        // Consulta metadados da lista e seus campos reais no SharePoint
+        let camposDisponiveis: any[] = [];
+        try {
+          const listMetaRes = await fetch(`${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')?$select=ListItemEntityTypeFullName,Id`, {
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json;odata=verbose"
+            }
+          });
+          if (listMetaRes.ok) {
+            const metaData = await listMetaRes.json();
+            if (metaData?.d?.ListItemEntityTypeFullName) {
+              entityType = metaData.d.ListItemEntityTypeFullName;
+            }
+          }
+
+          // Busca campos editáveis reais da lista para mapear nomes internos exatos
+          const fieldsRes = await fetch(`${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/fields?$filter=Hidden%20eq%20false%20and%20ReadOnlyField%20eq%20false&$select=InternalName,Title,StaticName,TypeAsString`, {
+            headers: {
+              "Authorization": `Bearer ${token}`,
+              "Accept": "application/json;odata=verbose"
+            }
+          });
+          if (fieldsRes.ok) {
+            const fData = await fieldsRes.json();
+            camposDisponiveis = fData?.d?.results || [];
+          }
+        } catch (metaErr) {
+          console.warn("[SharePoint list metadata] Usando tipo padrão:", metaErr);
+        }
+
+        // Monta o payload limpo mapeando com precisão os campos encontrados
+        // A coluna primária Title do SharePoint recebe o número do ID sequencial
+        const spPayload: Record<string, any> = {
+          Title: String(proximoId)
+        };
+
+        if (camposDisponiveis.length > 0) {
+          camposDisponiveis.forEach((campo: any) => {
+            const iName = campo.InternalName;
+            const tName = String(campo.Title || "").toLowerCase().trim();
+            const normName = String(iName).toLowerCase().trim();
+
+            if (normName === "title") {
+              spPayload[iName] = String(proximoId);
+              return;
+            }
+
+            // ID / Código / Número único
+            if (normName === "id" || tName === "id" || normName === "codigo" || normName === "numero" || tName === "código") {
+              spPayload[iName] = typeof campo.TypeAsString === 'string' && campo.TypeAsString.includes('Number') ? proximoId : String(proximoId);
+            }
+            // Categoria (CategoriaFluxo / Categoria / Tipo / etc.)
+            else if (normName === "categoriafluxo" || normName === "categoria" || tName.includes("categoria")) {
+              spPayload[iName] = categoriaFinal;
+            } 
+            // Tipo / Forma de Pagamento (TipoFluxo / FormaPagamento / etc.)
+            else if (normName === "tipofluxo" || normName === "formapagamento" || tName.includes("forma de pagamento") || tName === "tipo" || normName === "tipopagamento") {
+              spPayload[iName] = tipoFinal;
+            }
+            // Valor (ValorFluxo / Valor / ValorTotal / Total / etc.)
+            else if (normName === "valorfluxo" || normName === "valor" || normName === "valortotal" || tName.includes("valor")) {
+              spPayload[iName] = valorNum;
+            }
+            // Data (DataFluxo / Data / DataMovimento / etc.)
+            else if (normName === "datafluxo" || normName === "data" || normName === "datamovimento" || tName.includes("data")) {
+              spPayload[iName] = dataFinal;
+            }
+            // Id_Tesoureiro (Id_Tesoureiro / Tesoureiro / etc.)
+            else if (normName.includes("tesoureiro") || tName.includes("tesoureiro")) {
+              spPayload[iName] = String(tesoureiroFinal);
+            }
+            // Status (StatusFluxo / Status / etc.)
+            else if (normName === "statusfluxo" || normName === "status" || tName.includes("status")) {
+              spPayload[iName] = statusFinal;
+            }
+            // Descrição (DescricaoFluxo / Descricao / Motivo / Observacao / etc.)
+            else if (normName === "descricaofluxo" || normName === "descricao" || normName === "observacao" || tName.includes("descri") || tName.includes("observa") || tName.includes("motivo")) {
+              spPayload[iName] = descricaoFinal;
+            }
+          });
+        } else {
+          // Fallback caso metadados de campos não retornem: inclui colunas padrão
+          spPayload.Title = String(proximoId);
+          spPayload.CategoriaFluxo = categoriaFinal;
+          spPayload.TipoFluxo = tipoFinal;
+          spPayload.ValorFluxo = valorNum;
+          spPayload.DataFluxo = dataFinal;
+          spPayload.Id_Tesoureiro = String(tesoureiroFinal);
+          spPayload.StatusFluxo = statusFinal;
+          spPayload.DescricaoFluxo = descricaoFinal;
+        }
+
+        console.log("[SharePoint POST BD_FluxoCaixa] Payload a enviar:", JSON.stringify(spPayload));
+
+        // Envia requisição em formato nometadata (padrão moderno e sem dependência de __metadata)
+        let postHeaders: Record<string, string> = {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/json;odata=nometadata",
+          "Content-Type": "application/json;odata=nometadata"
+        };
+        if (requestDigest) {
+          postHeaders["X-RequestDigest"] = requestDigest;
+        }
+
+        let postRes = await fetch(listUrl, {
+          method: "POST",
+          headers: postHeaders,
+          body: JSON.stringify(spPayload)
+        });
+
+        // Se falhou por propriedade inexistente, remove a propriedade acusada e retenta
+        let tentativasRestantes = 5;
+        while (!postRes.ok && tentativasRestantes > 0) {
+          tentativasRestantes--;
+          const errText = await postRes.text().catch(() => "");
+          console.warn(`[SharePoint POST BD_FluxoCaixa] Status ${postRes.status}: ${errText.slice(0, 200)}`);
+
+          // Extrai nome da propriedade com erro (ex: The property 'CategoriaFluxo' does not exist)
+          const match = errText.match(/The property '([^']+)' does not exist/i);
+          if (match && match[1]) {
+            const propInvalida = match[1];
+            delete spPayload[propInvalida];
+            console.log(`[SharePoint POST BD_FluxoCaixa] Removendo coluna não encontrada '${propInvalida}' e retentando...`);
+            
+            postRes = await fetch(listUrl, {
+              method: "POST",
+              headers: postHeaders,
+              body: JSON.stringify(spPayload)
+            });
+            continue;
+          }
+
+          // Se a lista exigir o formato odata=verbose, tenta com __metadata correto
+          if (errText.includes("odata=verbose") || errText.includes("Cannot find type")) {
+            postHeaders["Accept"] = "application/json;odata=verbose";
+            postHeaders["Content-Type"] = "application/json;odata=verbose";
+            const payloadVerbose = {
+              __metadata: { type: entityType },
+              ...spPayload
+            };
+            postRes = await fetch(listUrl, {
+              method: "POST",
+              headers: postHeaders,
+              body: JSON.stringify(payloadVerbose)
+            });
+            break;
+          }
+
+          break;
+        }
+
+        if (postRes.ok) {
+          const postData = await postRes.json().catch(() => null);
+          const spCreated = postData?.d || postData;
+          if (spCreated?.ID || spCreated?.Id) {
+            novoItem.id = spCreated.ID || spCreated.Id;
+            novoItem.ID = spCreated.ID || spCreated.Id;
+          }
+          sharePointGravado = true;
+          sharePointDetalhe = "Gravado com sucesso no SharePoint Microsoft 365.";
+          console.log(`[BD_FluxoCaixa] 🚀 Item salvo diretamente no SharePoint ID: ${novoItem.ID}`);
         }
       }
-    } catch (spErr) {
-      console.warn('[SharePoint POST BD_FluxoCaixa] Erro de rede ao gravar no SharePoint:', spErr);
+    } catch (spErr: any) {
+      console.warn("[SharePoint POST BD_FluxoCaixa] Erro de comunicação com o SharePoint:", spErr?.message || spErr);
     }
 
-    console.log(`[BD_FluxoCaixa] ✅ Novo fluxo #${proximoId} cadastrado com sucesso: ${categoriaFinal} - R$ ${valorNum}`);
+    console.log(`[BD_FluxoCaixa] ✅ Novo fluxo #${novoItem.ID} cadastrado: ${categoriaFinal} - R$ ${valorNum} (${sharePointGravado ? 'SharePoint OK' : 'Cache SWR OK'})`);
 
     return res.json({
       sucesso: true,
-      mensagem: "Fluxo de caixa cadastrado com sucesso na tabela BD_FluxoCaixa!",
+      mensagem: sharePointGravado 
+        ? "Fluxo de caixa salvo com sucesso na lista BD_FluxoCaixa do SharePoint!"
+        : "Fluxo de caixa cadastrado com sucesso!",
+      sharePointSincronizado: sharePointGravado,
+      detalhe: sharePointDetalhe,
       item: novoItem
     });
   } catch (err: any) {
