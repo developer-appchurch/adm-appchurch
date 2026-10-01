@@ -31,7 +31,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen = false,
   onCloseMobile
 }) => {
-  const menuItems = [
+  const menuItems: {
+    id: ViewMode;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badge?: string;
+  }[] = [
     {
       id: 'validar-relatorios' as ViewMode,
       label: 'Validar Relatórios',
@@ -43,6 +48,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: FileSpreadsheet
     },
     {
+      id: 'fluxo-caixa' as ViewMode,
+      label: 'Fluxo de Caixa',
+      icon: TrendingUp
+    },
+    {
       id: 'dashboard' as ViewMode,
       label: 'DashBoard',
       icon: LayoutDashboard
@@ -50,13 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       id: 'indicador-trilho' as ViewMode,
       label: 'Indicador Trilho',
-      icon: GraduationCap,
-      badge: 'Novo'
-    },
-    {
-      id: 'fluxo-caixa' as ViewMode,
-      label: 'Fluxo de Caixa',
-      icon: TrendingUp
+      icon: GraduationCap
     }
   ];
 

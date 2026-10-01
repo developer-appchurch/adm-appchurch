@@ -11,9 +11,9 @@ export const MenuAdminView: React.FC<MenuAdminViewProps> = ({ onSelectView, usua
   const menuItems: { id: ViewMode; label: string; highlight?: boolean }[] = [
     { id: 'validar-relatorios', label: 'Validar Relatórios' },
     { id: 'relacao-envelopes', label: 'Relação Envelopes' },
-    { id: 'dashboard', label: 'DashBoard' },
-    { id: 'indicador-trilho', label: 'Indicador Trilho de Capacitação', highlight: true },
     { id: 'fluxo-caixa', label: 'Fluxo de Caixa' },
+    { id: 'dashboard', label: 'DashBoard' },
+    { id: 'indicador-trilho', label: 'Indicador Trilho de Capacitação' },
   ];
 
   return (
