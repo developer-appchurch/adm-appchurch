@@ -196,9 +196,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <p className="font-extrabold text-sm tracking-wide text-red-700">
                 {erroLogin}
               </p>
-              <p className="text-[11px] text-red-600/90 font-medium">
-                Verifique se o login e a senha digitados estão corretos. Caso a conexão com a base ainda não tenha sido autenticada, clique em "Conexão SharePoint" abaixo.
-              </p>
+              {erroLogin !== "Usuário não autorizado! Contate o administrador." && (
+                <p className="text-[11px] text-red-600/90 font-medium mt-0.5">
+                  Verifique se o login e a senha digitados estão corretos. Caso a conexão com a base ainda não tenha sido autenticada, clique em "Conexão SharePoint" abaixo.
+                </p>
+              )}
             </div>
           </div>
         )}

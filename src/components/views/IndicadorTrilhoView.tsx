@@ -94,6 +94,14 @@ export const IndicadorTrilhoView: React.FC = () => {
   const [modalCompletosAberto, setModalCompletosAberto] = useState<boolean>(false);
   const [buscaModalCompletos, setBuscaModalCompletos] = useState<string>('');
 
+  // Estado para fatia sob hover no gráfico de distribuição (Donut) para exibir label na parte externa
+  const [statusHoverDonut, setStatusHoverDonut] = useState<{
+    name: string;
+    value: number;
+    pct: number;
+    color: string;
+  } | null>(null);
+
   // Carrega os dados da API
   const carregarDados = async (forcar: boolean = false) => {
     if (forcar) setRefreshing(true);
@@ -549,9 +557,9 @@ export const IndicadorTrilhoView: React.FC = () => {
               <select
                 value={setorSelecionado}
                 onChange={(e) => setSetorSelecionado(e.target.value)}
-                className="bg-[#10121d] border border-[#2f3754] text-white text-xs rounded-xl px-3.5 py-2 font-medium focus:outline-none focus:border-indigo-400 cursor-pointer w-full sm:w-auto"
+                className="bg-[#10121d] border border-[#2f3754] text-white text-xs rounded-xl px-2.5 py-1.5 font-medium focus:outline-none focus:border-indigo-400 cursor-pointer w-full sm:w-auto"
               >
-                <option value="todos">Todos os Setores (Consolidado)</option>
+                <option value="todos">Todos</option>
                 {setoresDisponiveis.map(setor => (
                   <option key={setor} value={setor}>{setor}</option>
                 ))}
@@ -560,7 +568,7 @@ export const IndicadorTrilhoView: React.FC = () => {
           )}
 
           {/* Abas de visualização interna (Gráficos vs Lista de Membros vs Comparativo) */}
-          <div className="flex items-center gap-1 p-1 bg-[#10121d] rounded-xl border border-[#242a3e] ml-auto">
+          <div className="flex flex-wrap items-center gap-1 p-1 bg-[#10121d] rounded-xl border border-[#242a3e] w-full sm:w-auto ml-auto">
             <button
               onClick={() => setAbaAtiva('graficos')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -683,25 +691,25 @@ export const IndicadorTrilhoView: React.FC = () => {
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setModalCompletosAberto(true); }}
-          className="bg-[#161a29] border border-[#272d42] hover:border-purple-500/70 hover:shadow-purple-950/30 rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group transition-all duration-200 flex flex-col justify-between cursor-pointer active:scale-[0.99] select-none"
+          className="bg-[#161a29] border border-[#272d42] hover:border-cyan-500/70 hover:shadow-cyan-950/30 rounded-2xl p-4 sm:p-5 shadow-lg relative overflow-hidden group transition-all duration-200 flex flex-col justify-between cursor-pointer active:scale-[0.99] select-none"
           title="Clique para ver a lista de membros com 100% concluído"
         >
           <div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-purple-300 transition-colors">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-cyan-300 transition-colors">
                 Trilho Completo (100%)
               </span>
-              <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition-all shadow-sm">
+              <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-400 group-hover:bg-cyan-500 group-hover:text-white transition-all shadow-sm">
                 <Award className="w-4 h-4" />
               </div>
             </div>
 
             {/* Quantidade de membros com 100% e ao lado a % em relação ao total */}
             <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl sm:text-3xl font-black text-purple-300 font-mono group-hover:text-purple-200 transition-colors">
+              <span className="text-2xl sm:text-3xl font-black text-cyan-300 font-mono group-hover:text-cyan-200 transition-colors">
                 {metricasAtuais.membrosCompletos}
               </span>
-              <span className="text-base font-bold text-purple-400 font-mono">
+              <span className="text-base font-bold text-cyan-400 font-mono">
                 ({metricasAtuais.pctCompletos}%)
               </span>
               <span className="text-xs text-slate-400 font-medium">do total</span>
@@ -725,11 +733,11 @@ export const IndicadorTrilhoView: React.FC = () => {
           </div>
 
           <div className="mt-3 pt-2 border-t border-[#23283c] text-[10px] text-slate-500 flex items-center justify-between">
-            <span className="group-hover:text-purple-300 transition-colors font-semibold flex items-center gap-1">
+            <span className="group-hover:text-cyan-300 transition-colors font-semibold flex items-center gap-1">
               <span>Ver {metricasAtuais.membrosCompletos} membros</span>
-              <ArrowUpRight className="w-3 h-3 text-purple-400 inline" />
+              <ArrowUpRight className="w-3 h-3 text-cyan-400 inline" />
             </span>
-            <span className="text-purple-400/80 font-medium text-[9px] bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">
+            <span className="text-cyan-300 font-medium text-[9px] bg-cyan-500/10 px-1.5 py-0.5 rounded border border-cyan-500/20">
               Clique para abrir
             </span>
           </div>
@@ -925,11 +933,26 @@ export const IndicadorTrilhoView: React.FC = () => {
             <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-5 shadow-xl flex flex-col justify-between">
               <div className="flex items-center justify-between mb-2 border-b border-[#23283c] pb-3">
                 <div className="flex items-center gap-2">
-                  <PieChartIcon className="w-4 h-4 text-purple-400" />
+                  <PieChartIcon className="w-4 h-4 text-cyan-400" />
                   <h2 className="text-sm font-bold text-white">
                     Distribuição do Trilho
                   </h2>
                 </div>
+              </div>
+
+              {/* Informação / Label externa ao passar o mouse sobre o gráfico */}
+              <div className="min-h-[28px] flex items-center justify-center my-1.5 transition-all">
+                {statusHoverDonut ? (
+                  <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[#10121d] border border-cyan-500/40 text-xs shadow-lg animate-in fade-in zoom-in-95 duration-150">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: statusHoverDonut.color }} />
+                    <span className="font-bold text-white">{statusHoverDonut.name}:</span>
+                    <span className="text-cyan-300 font-semibold font-mono">{statusHoverDonut.value} membros ({statusHoverDonut.pct}%)</span>
+                  </div>
+                ) : (
+                  <span className="text-[11px] text-slate-500">
+                    Passe o mouse sobre as fatias para detalhes
+                  </span>
+                )}
               </div>
 
               <div className="h-56 w-full relative flex items-center justify-center">
@@ -943,12 +966,45 @@ export const IndicadorTrilhoView: React.FC = () => {
                       outerRadius={80}
                       paddingAngle={4}
                       dataKey="value"
+                      onMouseEnter={(entry: any) => {
+                        if (entry) {
+                          const val = Number(entry.value) || 0;
+                          const pct = metricasAtuais.totalMembros > 0
+                            ? Math.round((val / metricasAtuais.totalMembros) * 100)
+                            : 0;
+                          setStatusHoverDonut({
+                            name: entry.name,
+                            value: val,
+                            pct,
+                            color: entry.color
+                          });
+                        }
+                      }}
+                      onMouseLeave={() => setStatusHoverDonut(null)}
                     >
                       {dadosGraficoStatus.map((entry, index) => (
-                        <Cell key={`cell-status-${index}`} fill={entry.color} />
+                        <Cell 
+                          key={`cell-status-${index}`} 
+                          fill={entry.color}
+                          className="cursor-pointer transition-opacity hover:opacity-85"
+                          onMouseEnter={() => {
+                            const val = Number(entry.value) || 0;
+                            const pct = metricasAtuais.totalMembros > 0
+                              ? Math.round((val / metricasAtuais.totalMembros) * 100)
+                              : 0;
+                            setStatusHoverDonut({
+                              name: entry.name,
+                              value: val,
+                              pct,
+                              color: entry.color
+                            });
+                          }}
+                          onMouseLeave={() => setStatusHoverDonut(null)}
+                        />
                       ))}
                     </Pie>
                     <Tooltip
+                      position={{ y: 2 }}
                       content={({ active, payload }) => {
                         if (active && payload && payload.length) {
                           const p = payload[0];
@@ -956,9 +1012,10 @@ export const IndicadorTrilhoView: React.FC = () => {
                             ? Math.round(((p.value as number) / metricasAtuais.totalMembros) * 100)
                             : 0;
                           return (
-                            <div className="bg-[#0f111a] border border-[#2e3650] p-2.5 rounded-xl shadow-xl text-xs">
-                              <p className="font-bold text-white">{p.name}</p>
-                              <p className="text-indigo-300">{p.value} membros ({pct}%)</p>
+                            <div className="bg-[#0f111a] border border-[#2e3650] px-3 py-1.5 rounded-xl shadow-2xl text-xs flex items-center gap-2 pointer-events-none">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: (p.payload as any)?.color || '#06b6d4' }} />
+                              <span className="font-bold text-white">{p.name}:</span>
+                              <span className="text-cyan-300 font-semibold font-mono">{p.value} ({pct}%)</span>
                             </div>
                           );
                         }
@@ -967,7 +1024,7 @@ export const IndicadorTrilhoView: React.FC = () => {
                     />
                   </PieChart>
                 </ResponsiveContainer>
-                {/* Texto Central no Donut */}
+                {/* Texto Central no Donut (não é obstruído por tooltips) */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-xl font-black text-white font-mono">
                     {metricasAtuais.totalMembros}
@@ -978,7 +1035,15 @@ export const IndicadorTrilhoView: React.FC = () => {
 
               {/* Legenda do Donut */}
               <div className="space-y-2 pt-2 border-t border-[#23283c]">
-                <div className="flex items-center justify-between text-xs">
+                <div 
+                  className="flex items-center justify-between text-xs cursor-pointer hover:bg-white/[0.03] p-1 rounded-lg transition-colors"
+                  onMouseEnter={() => {
+                    const val = metricasAtuais.membrosCompletos;
+                    const pct = metricasAtuais.totalMembros > 0 ? Math.round((val / metricasAtuais.totalMembros) * 100) : 0;
+                    setStatusHoverDonut({ name: 'Completo (100%)', value: val, pct, color: '#10b981' });
+                  }}
+                  onMouseLeave={() => setStatusHoverDonut(null)}
+                >
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-emerald-500" />
                     <span className="text-slate-300">Completo (100%)</span>
@@ -988,7 +1053,15 @@ export const IndicadorTrilhoView: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between text-xs">
+                <div 
+                  className="flex items-center justify-between text-xs cursor-pointer hover:bg-white/[0.03] p-1 rounded-lg transition-colors"
+                  onMouseEnter={() => {
+                    const val = metricasAtuais.membrosEmAndamento;
+                    const pct = metricasAtuais.totalMembros > 0 ? Math.round((val / metricasAtuais.totalMembros) * 100) : 0;
+                    setStatusHoverDonut({ name: 'Em Andamento', value: val, pct, color: '#f59e0b' });
+                  }}
+                  onMouseLeave={() => setStatusHoverDonut(null)}
+                >
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-amber-500" />
                     <span className="text-slate-300">Em Andamento</span>
@@ -998,7 +1071,15 @@ export const IndicadorTrilhoView: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between text-xs">
+                <div 
+                  className="flex items-center justify-between text-xs cursor-pointer hover:bg-white/[0.03] p-1 rounded-lg transition-colors"
+                  onMouseEnter={() => {
+                    const val = metricasAtuais.membrosNaoIniciados;
+                    const pct = metricasAtuais.totalMembros > 0 ? Math.round((val / metricasAtuais.totalMembros) * 100) : 0;
+                    setStatusHoverDonut({ name: 'Não Iniciado', value: val, pct, color: '#64748b' });
+                  }}
+                  onMouseLeave={() => setStatusHoverDonut(null)}
+                >
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-slate-500" />
                     <span className="text-slate-300">Não Iniciado</span>
@@ -1060,7 +1141,7 @@ export const IndicadorTrilhoView: React.FC = () => {
               </ResponsiveContainer>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
               {dadosComparativoAreas.map((item, idx) => (
                 <div
                   key={item.area}
@@ -1147,7 +1228,7 @@ export const IndicadorTrilhoView: React.FC = () => {
               </ResponsiveContainer>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
               {dadosComparativoSetores.map((item, idx) => (
                 <div
                   key={item.setor}
@@ -1183,7 +1264,7 @@ export const IndicadorTrilhoView: React.FC = () => {
       {abaAtiva === 'membros' && (
         <div className="bg-[#161a29] border border-[#272d42] rounded-2xl overflow-hidden shadow-xl space-y-4 p-5">
           {/* Barra de Filtros da Tabela */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 border-b border-[#23283c] pb-4">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 border-b border-[#23283c] pb-4">
             <div className="relative flex-1 min-w-[240px]">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
@@ -1348,7 +1429,7 @@ export const IndicadorTrilhoView: React.FC = () => {
             {/* Header do Modal */}
             <div className="p-4 sm:p-5 border-b border-[#23283c] flex items-center justify-between bg-[#181c2b]">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shadow-sm shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shadow-sm shrink-0">
                   <Award className="w-5 h-5" />
                 </div>
                 <div>
@@ -1356,7 +1437,7 @@ export const IndicadorTrilhoView: React.FC = () => {
                     <h3 className="text-base sm:text-lg font-bold text-white">
                       Membros com Trilho Completo (100%)
                     </h3>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
                       {membrosCompletosList.length}
                     </span>
                   </div>
@@ -1383,7 +1464,7 @@ export const IndicadorTrilhoView: React.FC = () => {
                   value={buscaModalCompletos}
                   onChange={(e) => setBuscaModalCompletos(e.target.value)}
                   placeholder="Buscar membro ou célula..."
-                  className="w-full bg-[#181c2b] border border-[#2b334d] rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-400 transition-all"
+                  className="w-full bg-[#181c2b] border border-[#2b334d] rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-all"
                   autoFocus
                 />
                 {buscaModalCompletos && (
@@ -1429,7 +1510,7 @@ export const IndicadorTrilhoView: React.FC = () => {
                           </td>
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2.5">
-                              <div className="w-7 h-7 rounded-full bg-purple-500/20 text-purple-300 font-bold text-[11px] flex items-center justify-center border border-purple-500/30 shrink-0">
+                              <div className="w-7 h-7 rounded-full bg-cyan-500/20 text-cyan-300 font-bold text-[11px] flex items-center justify-center border border-cyan-500/30 shrink-0">
                                 {m.nome.charAt(0).toUpperCase()}
                               </div>
                               <div>
@@ -1445,7 +1526,7 @@ export const IndicadorTrilhoView: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right sm:text-left">
-                            <span className="inline-block px-2.5 py-1 rounded-lg bg-[#1c2133] text-purple-300 border border-purple-500/30 text-[11px] font-medium">
+                            <span className="inline-block px-2.5 py-1 rounded-lg bg-[#162235] text-cyan-300 border border-cyan-500/30 text-[11px] font-medium">
                               {m.celula || 'Não informada'}
                             </span>
                           </td>

@@ -509,15 +509,15 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
   return (
     <div id="relacao-envelopes-container" className="p-3.5 sm:p-6 space-y-4 sm:space-y-5 max-w-[1600px] mx-auto text-slate-100">
       {/* 1. Primeiro Bloco: SKUs (Envelopes Validados, Envelopes Pendentes e Relatório Duplicado) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-3 gap-3.5 sm:gap-4">
         {/* Card 1: Envelopes Validados */}
         <div 
           id="card-envelopes-validados"
-          className="bg-[#202538] p-4 rounded-xl border border-emerald-500/30 flex items-center justify-between shadow-md"
+          className="bg-[#202538] p-4 rounded-xl border border-emerald-500/30 flex items-center justify-between gap-3 sm:gap-4 shadow-md"
         >
-          <div>
-            <span className="text-slate-400 text-xs font-medium block">Envelopes Validados</span>
-            <div className="flex items-baseline gap-2 mt-1">
+          <div className="min-w-0 flex-1">
+            <span className="text-slate-400 text-xs font-medium block truncate">Envelopes Validados</span>
+            <div className="flex flex-wrap items-baseline gap-1.5 sm:gap-2 mt-1">
               <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">
                 {resumoSKUs.qtdValidados}
               </span>
@@ -525,23 +525,23 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 de {resumoSKUs.totalLancados} relatórios do setor
               </span>
             </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">
+            <p className="text-[10px] text-slate-500 mt-0.5 break-words">
               Recebidos e confirmados pela tesouraria
             </p>
           </div>
-          <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <CheckCircle2 className="w-6 h-6" />
+          <div className="p-2.5 sm:p-3 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0 self-center">
+            <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
           </div>
         </div>
 
         {/* Card 2: Envelopes Pendentes */}
         <div 
           id="card-envelopes-pendentes"
-          className="bg-[#202538] p-4 rounded-xl border border-amber-500/30 flex items-center justify-between shadow-md"
+          className="bg-[#202538] p-4 rounded-xl border border-amber-500/30 flex items-center justify-between gap-3 sm:gap-4 shadow-md"
         >
-          <div>
-            <span className="text-slate-400 text-xs font-medium block">Envelopes Pendentes</span>
-            <div className="flex items-baseline gap-2 mt-1">
+          <div className="min-w-0 flex-1">
+            <span className="text-slate-400 text-xs font-medium block truncate">Envelopes Pendentes</span>
+            <div className="flex flex-wrap items-baseline gap-1.5 sm:gap-2 mt-1">
               <span className="text-2xl sm:text-3xl font-black text-amber-400 font-mono">
                 {resumoSKUs.qtdPendentes}
               </span>
@@ -549,12 +549,12 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 aguardando validação
               </span>
             </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">
+            <p className="text-[10px] text-slate-500 mt-0.5 break-words">
               Lançados no app, aguardando recebimento na tesouraria
             </p>
           </div>
-          <div className="p-3 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
-            <Clock className="w-6 h-6" />
+          <div className="p-2.5 sm:p-3 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0 self-center">
+            <Clock className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
           </div>
         </div>
 
@@ -566,7 +566,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
               setModalDuplicadosAberto(true);
             }
           }}
-          className={`p-4 rounded-xl border flex items-center justify-between shadow-md transition-all ${
+          className={`p-4 rounded-xl border flex items-center justify-between gap-3 sm:gap-4 shadow-md transition-all ${
             duplicadosInfo.totalDuplicados > 0
               ? 'bg-[#202538] border-rose-500/50 hover:border-rose-500 hover:bg-[#252b41] cursor-pointer ring-1 ring-rose-500/20 active:scale-[0.99]'
               : 'bg-[#202538] border-slate-700/60 opacity-90'
@@ -577,16 +577,16 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
               : 'Nenhum relatório duplicado encontrado'
           }
         >
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-slate-400 text-xs font-medium block">Relatório Duplicado</span>
+              <span className="text-slate-400 text-xs font-medium block truncate">Relatório Duplicado</span>
               {duplicadosInfo.totalDuplicados > 0 && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 shrink-0">
                   Atenção
                 </span>
               )}
             </div>
-            <div className="flex items-baseline gap-2 mt-1">
+            <div className="flex flex-wrap items-baseline gap-1.5 sm:gap-2 mt-1">
               <span className={`text-2xl sm:text-3xl font-black font-mono ${
                 duplicadosInfo.totalDuplicados > 0 ? 'text-rose-400' : 'text-slate-300'
               }`}>
@@ -596,18 +596,18 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 {duplicadosInfo.totalDuplicados === 1 ? 'duplicado detectado' : 'duplicados detectados'}
               </span>
             </div>
-            <p className="text-[10px] text-slate-500 mt-0.5">
+            <p className="text-[10px] text-slate-500 mt-0.5 break-words">
               {duplicadosInfo.totalDuplicados > 0 
                 ? 'Mesma célula com múltiplos relatórios na semana (clique p/ ver)'
                 : 'Nenhum relatório duplicado nas semanas deste mês'}
             </p>
           </div>
-          <div className={`p-3 rounded-xl border ${
+          <div className={`p-2.5 sm:p-3 rounded-xl border shrink-0 self-center ${
             duplicadosInfo.totalDuplicados > 0
               ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
               : 'bg-slate-700/20 text-slate-400 border-slate-700/30'
           }`}>
-            <Copy className="w-6 h-6" />
+            <Copy className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
           </div>
         </div>
       </div>

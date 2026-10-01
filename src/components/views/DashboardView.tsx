@@ -196,15 +196,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return maxVal > 0 ? maxVal * 1.3 : 1000;
   }, [mesesGrafico]);
 
-  // Formatar valores para exibição acima das colunas (Ex.: 8.000,0)
+  // Formatar valores para exibição acima das colunas com 2 casas decimais (Ex.: 8.000,00)
   const formatarValorColuna = (val: number, temMovimento: boolean = false): string => {
     if (val === undefined || val === null) return '';
     if (val <= 0) {
-      return temMovimento ? '0,0' : '';
+      return temMovimento ? '0,00' : '';
     }
     return val.toLocaleString('pt-BR', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     });
   };
 
@@ -352,7 +352,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const formatBRL = (val: number) => {
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
-      currency: 'BRL'
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     }).format(val || 0);
   };
 
@@ -442,34 +444,34 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* 5 KPI Cards com dados do SharePoint do Mês e Ano Selecionados */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
         {/* Total Mês PIX */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955]">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1">Total Mês PIX</p>
-          <p className="text-lg sm:text-2xl font-extrabold text-white tracking-tight">
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Total Mês PIX</p>
+          <p className="text-base sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight truncate">
             {formatBRL(totalMesPix)}
           </p>
         </div>
 
         {/* Total Mês Espécie */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955]">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1">Total Oferta Espécie</p>
-          <p className="text-lg sm:text-2xl font-extrabold text-white tracking-tight">
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Total Oferta Espécie</p>
+          <p className="text-base sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight truncate">
             {formatBRL(totalMesEspecie)}
           </p>
         </div>
 
         {/* Total Validado */}
-        <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] col-span-2 sm:col-span-1">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1">Total Validado</p>
-          <p className="text-lg sm:text-2xl font-extrabold text-emerald-400 tracking-tight">
+        <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] col-span-2 lg:col-span-1">
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Total Validado</p>
+          <p className="text-base sm:text-xl lg:text-2xl font-extrabold text-emerald-400 tracking-tight truncate">
             {formatBRL(totalMesGeral)}
           </p>
         </div>
 
         {/* Células Ativas */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] text-center">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1">Células Ativas</p>
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Células Ativas</p>
           <p className="text-2xl sm:text-3xl font-black text-white tracking-tight">
             {celulasAtivas}
           </p>
@@ -477,7 +479,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Relatórios Previstos */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] text-center">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1">Relatórios Previstos</p>
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Relatórios Previstos</p>
           <p className="text-2xl sm:text-3xl font-black text-white tracking-tight">
             {relatoriosPrevistos}
           </p>
@@ -522,13 +524,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       className="flex flex-col items-center h-full justify-end group relative"
                       title={`${m.nome} - Total: ${formatBRL(m.total)} (PIX: ${formatBRL(m.pix)} | Espécie: ${formatBRL(m.esp)})`}
                     >
-                      {/* Barras Lado a Lado com valores individuais no formato (Ex.: 8.000,0) */}
+                      {/* Barras Lado a Lado com valores individuais no formato com 2 decimais (Ex.: 8.000,00) */}
                       <div className="w-full h-36 sm:h-40 flex items-end justify-center gap-1 px-0.5">
                         {/* Coluna Verde - PIX */}
                         <div className="flex flex-col items-center justify-end h-full min-w-0">
                           {valPixStr && (
                             <span
-                              className="text-[8px] sm:text-[9px] font-bold text-[#22c55e] mb-1 leading-none text-center whitespace-nowrap select-none"
+                              className="text-[7.5px] sm:text-[9px] font-bold text-[#22c55e] mb-1 leading-none text-center whitespace-nowrap select-none tracking-tight"
                               title={`PIX: R$ ${valPixStr}`}
                             >
                               {valPixStr}
@@ -547,7 +549,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <div className="flex flex-col items-center justify-end h-full min-w-0">
                           {valEspStr && (
                             <span
-                              className="text-[8px] sm:text-[9px] font-bold text-slate-300 mb-1 leading-none text-center whitespace-nowrap select-none"
+                              className="text-[7.5px] sm:text-[9px] font-bold text-slate-300 mb-1 leading-none text-center whitespace-nowrap select-none tracking-tight"
                               title={`Espécie: R$ ${valEspStr}`}
                             >
                               {valEspStr}

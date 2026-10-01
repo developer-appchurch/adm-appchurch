@@ -802,7 +802,67 @@ app.get("/api/sharepoint/membros", async (req: Request, res: Response) => {
   });
 });
 
-// Autenticação de Usuário contra a tabela BD_membros do SharePoint + Master Accounts
+// Obter permissões da tabela BD_PerfilPermissao do SharePoint
+app.get("/api/sharepoint/perfil-permissao", async (req: Request, res: Response) => {
+  try {
+    const raw = await fetchSharePointList("BD_PerfilPermissao", 500, false);
+    const ids = raw.map((item: any) => String(item.ID_Pessoa || item.Id_Pessoa || item.id_pessoa || item.IDPessoa || item.IdPessoa || item.idPessoa || item.PessoaId || "").trim()).filter(Boolean);
+    res.json({
+      sucesso: true,
+      total: raw.length,
+      idsAutorizados: Array.from(new Set(ids)),
+      sample: raw.slice(0, 5)
+    });
+  } catch (err: any) {
+    res.status(500).json({ sucesso: false, erro: err?.message || String(err) });
+  }
+});
+
+// Cache de pessoas autorizadas na tabela BD_PerfilPermissao
+let idsPermitidosCache: { ids: Set<string>; expiraEm: number } | null = null;
+
+async function verificarUsuarioAutorizado(idMembro: string | number): Promise<boolean> {
+  const idStr = String(idMembro || "").trim();
+  if (!idStr) return false;
+
+  // 1. Usa cache se recente (60s)
+  if (idsPermitidosCache && Date.now() < idsPermitidosCache.expiraEm && idsPermitidosCache.ids.size > 0) {
+    return idsPermitidosCache.ids.has(idStr);
+  }
+
+  // 2. Consulta lista BD_PerfilPermissao do SharePoint
+  try {
+    const raw = await fetchSharePointList("BD_PerfilPermissao", 5000, false);
+    const novoSet = new Set<string>();
+
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        const val = item.ID_Pessoa || item.Id_Pessoa || item.id_pessoa || item.IDPessoa || item.IdPessoa || item.idPessoa || item.PessoaId;
+        if (val !== undefined && val !== null) {
+          const s = String(val).trim();
+          if (s) novoSet.add(s);
+        }
+      }
+    }
+
+    idsPermitidosCache = {
+      ids: novoSet,
+      expiraEm: Date.now() + 60000
+    };
+
+    console.log(`[BD_PerfilPermissao] Total de ${novoSet.size} pessoas autorizadas carregadas:`, Array.from(novoSet));
+    return novoSet.has(idStr);
+  } catch (err) {
+    console.error("[BD_PerfilPermissao] Erro ao consultar lista no SharePoint:", err);
+    if (idsPermitidosCache && idsPermitidosCache.ids.size > 0) {
+      return idsPermitidosCache.ids.has(idStr);
+    }
+    // Fallback de segurança para ID 4 caso o SharePoint esteja temporariamente instável
+    return idStr === "4";
+  }
+}
+
+// Autenticação de Usuário contra a tabela BD_membros do SharePoint + Master Accounts com controle por BD_PerfilPermissao
 app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
   const { login, senha } = req.body;
   const termo = String(login || "").trim();
@@ -839,7 +899,17 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
 
   if (isMasterDeveloper || isMasterMidia || isMasterAdmin) {
     if (senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === SP_PASS || senhaDigitada === "12345") {
-      console.log(`[Auth] Login administrativo bem-sucedido: ${termo}`);
+      const membroId = 4;
+      const autorizado = await verificarUsuarioAutorizado(membroId);
+      if (!autorizado) {
+        console.warn(`[Auth] Acesso bloqueado para conta master ID ${membroId}: não consta em BD_PerfilPermissao.`);
+        return res.status(403).json({
+          sucesso: false,
+          erro: "Usuário não autorizado! Contate o administrador."
+        });
+      }
+
+      console.log(`[Auth] Login administrativo bem-sucedido e autorizado: ${termo}`);
       return res.json({
         sucesso: true,
         membro: {
@@ -918,6 +988,13 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
   if (!membro) {
     if (termoNorm.includes("fonteles") || termoNorm === "jfonteles" || termoNorm === "junio") {
       if (senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === "12345" || senhaDigitada === SP_PASS) {
+        const autorizado = await verificarUsuarioAutorizado(4);
+        if (!autorizado) {
+          return res.status(403).json({
+            sucesso: false,
+            erro: "Usuário não autorizado! Contate o administrador."
+          });
+        }
         return res.json({
           sucesso: true,
           membro: {
@@ -957,7 +1034,19 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
     });
   }
 
-  console.log(`[Auth] Usuário autenticado com sucesso: ${membro.nome} (${membro.login})`);
+  // Verificação obrigatória contra BD_PerfilPermissao (ID_Pessoa)
+  const membroId = String(membro.id || membro.ID || "").trim();
+  const autorizado = await verificarUsuarioAutorizado(membroId);
+
+  if (!autorizado) {
+    console.warn(`[Auth] Acesso negado: Usuário "${membro.nome}" (ID: ${membroId}) não está presente na coluna ID_Pessoa de BD_PerfilPermissao.`);
+    return res.status(403).json({
+      sucesso: false,
+      erro: "Usuário não autorizado! Contate o administrador."
+    });
+  }
+
+  console.log(`[Auth] Usuário autorizado e autenticado com sucesso: ${membro.nome} (${membro.login}, ID: ${membroId})`);
   return res.json({
     sucesso: true,
     membro: {

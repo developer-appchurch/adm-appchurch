@@ -733,7 +733,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
         </div>
 
         {/* Barra de Filtros Rápidos Integrada */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-[#111420] p-3 rounded-xl border border-[#23283c] text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-[#111420] p-3 rounded-xl border border-[#23283c] text-xs">
           
           {/* Busca textual */}
           <div className="relative">

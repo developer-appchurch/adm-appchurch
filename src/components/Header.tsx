@@ -74,14 +74,14 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header 
       id="app-header" 
-      className="bg-[#1c2030] text-slate-100 px-3.5 sm:px-6 py-3 sm:py-4 border-b border-[#2a2f48] flex flex-wrap items-center justify-between gap-3"
+      className="bg-[#1c2030] text-slate-100 px-3 sm:px-5 py-2.5 sm:py-3.5 border-b border-[#2a2f48] flex flex-wrap items-center justify-between gap-2 sm:gap-3"
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2">
         {/* Mobile Hamburger Button */}
         {onToggleMobileMenu && (
           <button
             onClick={onToggleMobileMenu}
-            className="md:hidden p-2 -ml-1 rounded-lg text-slate-300 hover:text-white hover:bg-[#282e48] transition-colors cursor-pointer"
+            className="md:hidden p-1.5 -ml-1 rounded-lg text-slate-300 hover:text-white hover:bg-[#282e48] transition-colors cursor-pointer"
             aria-label="Abrir Menu Lateral"
             title="Menu"
           >
@@ -93,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
           <p className="text-[11px] sm:text-xs text-slate-400 font-medium tracking-wide">
             Olá {usuarioConectado?.nome || 'Admin'}
           </p>
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2">
             <h2 className="text-base sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
               {getTitle()}
             </h2>
@@ -102,14 +102,14 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Right Controls */}
-      <div className="flex items-center flex-wrap gap-2 sm:gap-2.5 ml-auto">
+      <div className="flex items-center flex-wrap gap-1 sm:gap-1.5 ml-auto">
         {/* Export Quick Buttons when on Cash Flow */}
         {currentView === 'fluxo-caixa' && onExportExcel && onExportPdf && (
-          <div className="flex items-center gap-1 sm:gap-1.5">
+          <div className="flex items-center gap-1">
             <button
               id="header-btn-excel"
               onClick={onExportExcel}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-emerald-700/80 hover:bg-emerald-600 text-white shadow-sm border border-emerald-500/50 transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded bg-emerald-700/80 hover:bg-emerald-600 text-white shadow-sm border border-emerald-500/50 transition-colors cursor-pointer"
               title="Exportar para Excel"
             >
               <FileSpreadsheet className="w-3.5 h-3.5" />
@@ -118,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="header-btn-pdf"
               onClick={onExportPdf}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-rose-700/80 hover:bg-rose-600 text-white shadow-sm border border-rose-500/50 transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1 text-xs font-semibold rounded bg-rose-700/80 hover:bg-rose-600 text-white shadow-sm border border-rose-500/50 transition-colors cursor-pointer"
               title="Exportar para PDF"
             >
               <FileText className="w-3.5 h-3.5" />
@@ -131,7 +131,7 @@ export const Header: React.FC<HeaderProps> = ({
         {currentView === 'relacao-envelopes' ? (
           <>
             {/* 1. Ano */}
-            <div className="flex items-center gap-1.5 bg-[#252a40] px-2.5 py-1.5 rounded border border-[#394164]">
+            <div className="flex items-center gap-1 bg-[#252a40] px-2 py-1 rounded border border-[#394164]">
               <label htmlFor="select-ano-header" className="text-[11px] sm:text-xs text-slate-300 font-medium">
                 Ano:
               </label>
@@ -150,7 +150,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* 2. Mês */}
             {mesSelecionado && onSelectMes && (
-              <div className="flex items-center gap-1.5 bg-[#252a40] px-2.5 py-1.5 rounded border border-[#394164]">
+              <div className="flex items-center gap-1 bg-[#252a40] px-2 py-1 rounded border border-[#394164]">
                 <label htmlFor="select-mes-header" className="text-[11px] sm:text-xs text-slate-300 font-medium">
                   Mês:
                 </label>
@@ -171,7 +171,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             {/* 3. Setor */}
             {setorSelecionado && onSelectSetor && (
-              <div className="flex items-center gap-1.5 bg-[#252a40] px-2.5 py-1.5 rounded border border-[#394164]">
+              <div className="flex items-center gap-1 bg-[#252a40] px-2 py-1 rounded border border-[#394164]">
                 <label htmlFor="select-setor-header" className="text-[11px] sm:text-xs text-slate-300 font-medium">
                   Setor:
                 </label>
@@ -179,7 +179,7 @@ export const Header: React.FC<HeaderProps> = ({
                   id="select-setor-header"
                   value={setorSelecionado}
                   onChange={(e) => onSelectSetor(e.target.value)}
-                  className="bg-white text-xs font-bold text-slate-900 px-2 py-0.5 rounded focus:outline-none cursor-pointer shadow-xs"
+                  className="bg-white text-xs font-bold text-slate-900 px-1.5 py-0.5 rounded focus:outline-none cursor-pointer shadow-xs"
                 >
                   {(setoresDisponiveis || ['Safira', 'Fire', 'White', 'Azul', 'Amarelo', 'Black', 'Diamante', 'Legacy', 'Onix', 'Titanium']).map(s => (
                     <option key={s} value={s}>{s}</option>
@@ -190,7 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
           </>
         ) : currentView === 'dashboard' ? (
           /* Ano selector apenas para a tela Dashboard */
-          <div className="flex items-center gap-1.5 bg-[#252a40] px-2.5 py-1.5 rounded border border-[#394164]">
+          <div className="flex items-center gap-1 bg-[#252a40] px-2 py-1 rounded border border-[#394164]">
             <label htmlFor="select-ano-header" className="text-[11px] sm:text-xs text-slate-300 font-medium">
               Ano:
             </label>
@@ -208,16 +208,18 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         ) : null}
 
-        {/* Refresh button (botão de sincronizar os dados) */}
-        <button
-          id="header-refresh-btn"
-          onClick={onRefresh}
-          className="p-2 rounded-full hover:bg-[#282e46] text-slate-300 hover:text-white transition-colors cursor-pointer"
-          title="Recarregar e sincronizar dados do banco"
-          aria-label="Atualizar dados"
-        >
-          <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
-        </button>
+        {/* Refresh button (botão de sincronizar os dados) - Oculto na tela 'validar-relatorios' */}
+        {currentView !== 'validar-relatorios' && (
+          <button
+            id="header-refresh-btn"
+            onClick={onRefresh}
+            className="p-1.5 rounded-full hover:bg-[#282e46] text-slate-300 hover:text-white transition-colors cursor-pointer"
+            title="Recarregar e sincronizar dados do banco"
+            aria-label="Atualizar dados"
+          >
+            <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-indigo-400' : ''}`} />
+          </button>
+        )}
       </div>
     </header>
   );

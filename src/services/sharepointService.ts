@@ -534,6 +534,24 @@ export class SharePointService {
       };
     }
 
+    // Verificação de autorização em BD_PerfilPermissao (coluna ID_Pessoa)
+    try {
+      const respPerm = await fetch('/api/sharepoint/perfil-permissao');
+      if (respPerm.ok) {
+        const jsonPerm = await respPerm.json();
+        if (jsonPerm && Array.isArray(jsonPerm.idsAutorizados) && jsonPerm.idsAutorizados.length > 0) {
+          const membroIdStr = String(membroEncontrado.id || membroEncontrado.ID || '').trim();
+          if (!jsonPerm.idsAutorizados.includes(membroIdStr)) {
+            console.warn(`[SharePointService] Usuário ID ${membroIdStr} (${membroEncontrado.nome}) não autorizado em BD_PerfilPermissao.`);
+            return {
+              sucesso: false,
+              erro: 'Usuário não autorizado! Contate o administrador.'
+            };
+          }
+        }
+      }
+    } catch {}
+
     // Salva o usuário logado na configuração do sistema
     const now = new Date();
     const timestampStr = now.toISOString().replace('T', ' ').slice(0, 19);

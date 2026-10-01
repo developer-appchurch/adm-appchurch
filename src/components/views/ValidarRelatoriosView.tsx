@@ -489,10 +489,10 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
       )}
 
       {/* Barra Superior de Controles e Filtros */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#2d334d] pb-3">
-        <div className="flex items-center flex-wrap gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-2.5 border-b border-[#2d334d] pb-2.5">
+        <div className="flex items-center flex-wrap gap-1.5 sm:gap-2">
           {/* Seletor de Ano */}
-          <div className="flex items-center gap-1.5 bg-[#20263c] px-2.5 py-1.5 rounded-lg border border-[#313956] text-xs shadow-sm">
+          <div className="flex items-center gap-1 bg-[#20263c] px-2 py-1 rounded-lg border border-[#313956] text-xs shadow-sm">
             <label htmlFor="select-ano-validar" className="text-slate-300 font-medium select-none">
               Ano:
             </label>
@@ -510,7 +510,7 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
           </div>
 
           {/* Seletor de Mês (com opção 'Todos os Meses' padrão) */}
-          <div className="flex items-center gap-1.5 bg-[#20263c] px-2.5 py-1.5 rounded-lg border border-[#313956] text-xs shadow-sm">
+          <div className="flex items-center gap-1 bg-[#20263c] px-2 py-1 rounded-lg border border-[#313956] text-xs shadow-sm">
             <label htmlFor="select-mes-validar" className="text-slate-300 font-medium select-none">
               Mês:
             </label>
@@ -536,16 +536,16 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center flex-wrap gap-2.5">
+        <div className="flex items-center flex-wrap gap-1.5 sm:gap-2">
           {/* Alternador de Abas: P/ Validar vs Confirmados */}
-          <div className="flex items-center bg-[#151724] p-1 rounded-lg border border-[#2c324b]">
+          <div className="flex items-center bg-[#151724] p-0.5 rounded-lg border border-[#2c324b]">
             <button
               id="tab-btn-p-validar"
               onClick={() => {
                 setTabAtiva('P_VALIDAR');
                 setSelecionados(new Set());
               }}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 tabAtiva === 'P_VALIDAR'
                   ? 'bg-amber-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white hover:bg-[#202538]'
@@ -563,7 +563,7 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
                 setTabAtiva('CONFIRMADOS');
                 setSelecionados(new Set());
               }}
-              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+              className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                 tabAtiva === 'CONFIRMADOS'
                   ? 'bg-emerald-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-white hover:bg-[#202538]'
@@ -584,14 +584,14 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
               placeholder="Buscar célula, líder..."
               value={buscaTexto}
               onChange={(e) => setBuscaTexto(e.target.value)}
-              className="bg-[#151724] border border-[#2c324b] text-xs text-white pl-8 pr-3 py-1.5 rounded-lg focus:outline-none focus:border-indigo-400 w-36 sm:w-44 placeholder:text-slate-500"
+              className="bg-[#151724] border border-[#2c324b] text-xs text-white pl-8 pr-2.5 py-1 rounded-lg focus:outline-none focus:border-indigo-400 w-32 sm:w-40 placeholder:text-slate-500"
             />
           </div>
 
           {/* Botão de Atualizar */}
           <button
             onClick={onRefresh}
-            className="p-2 rounded-lg bg-[#22273a] hover:bg-[#2c324b] text-slate-300 hover:text-white border border-[#343b57] transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg bg-[#22273a] hover:bg-[#2c324b] text-slate-300 hover:text-white border border-[#343b57] transition-colors cursor-pointer"
             title="Recarregar dados"
             aria-label="Recarregar"
           >
