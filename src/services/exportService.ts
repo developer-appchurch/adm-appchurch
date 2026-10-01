@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { LancamentoTesouraria, FiltrosFluxoCaixa } from '../types';
+import { LancamentoTesouraria, FiltrosFluxoCaixa, MovimentacaoFluxoCaixa } from '../types';
 
 export class ExportService {
   /**
@@ -264,5 +264,137 @@ export class ExportService {
 
     const dataHora = new Date().toISOString().slice(0, 10);
     doc.save(`Fluxo_Caixa_AppChurch_${dataHora}.pdf`);
+  }
+
+  /**
+   * Exporta a lista de movimentações de BD_FluxoCaixa para Excel
+   */
+  public static exportarFluxoCaixaExcel(
+    movimentacoes: MovimentacaoFluxoCaixa[],
+    info: { ano?: number; mes?: string },
+    nomeArquivo: string = 'Fluxo_Caixa_AppChurch'
+  ): void {
+    const wb = XLSX.utils.book_new();
+
+    const totalEntradas = movimentacoes
+      .filter(m => m.tipo === 'ENTRADA')
+      .reduce((sum, m) => sum + m.valor, 0);
+
+    const totalSaidas = movimentacoes
+      .filter(m => m.tipo === 'SAIDA')
+      .reduce((sum, m) => sum + m.valor, 0);
+
+    const saldo = totalEntradas - totalSaidas;
+
+    const resumo = [
+      ['APPCHURCH - DEMONSTRATIVO DE FLUXO DE CAIXA'],
+      ['Data de Exportação:', new Date().toLocaleString('pt-BR')],
+      ['Ano de Referência:', info.ano || 'Todos'],
+      ['Mês de Referência:', info.mes || 'Todos'],
+      [''],
+      ['INDICADOR', 'VALOR (R$)', 'STATUS'],
+      ['Total de Entradas', totalEntradas, 'Receitas'],
+      ['Total de Saídas', totalSaidas, 'Despesas'],
+      ['Saldo Líquido', saldo, saldo >= 0 ? 'Superávit' : 'Déficit'],
+      ['Total de Movimentações', movimentacoes.length, 'Registros']
+    ];
+
+    const wsResumo = XLSX.utils.aoa_to_sheet(resumo);
+    XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo');
+
+    const detalhado = movimentacoes.map(m => ({
+      'ID': m.id,
+      'Data': m.dataBR || m.data,
+      'Ano': m.ano,
+      'Mês': m.mes,
+      'Tipo': m.tipo === 'ENTRADA' ? 'Entrada (+)' : 'Saída (-)',
+      'Descrição': m.descricao,
+      'Categoria': m.categoria,
+      'Forma de Pagamento': m.formaPagamento || 'PIX',
+      'Valor (R$)': m.valor,
+      'Status': m.status || 'Confirmado',
+      'Observações': m.observacao || ''
+    }));
+
+    const wsDetalhes = XLSX.utils.json_to_sheet(detalhado);
+    XLSX.utils.book_append_sheet(wb, wsDetalhes, 'Movimentações');
+
+    XLSX.writeFile(wb, `${nomeArquivo}.xlsx`);
+  }
+
+  /**
+   * Exporta a lista de movimentações de BD_FluxoCaixa para PDF
+   */
+  public static exportarFluxoCaixaPDF(
+    movimentacoes: MovimentacaoFluxoCaixa[],
+    info: { ano?: number; mes?: string },
+    nomeArquivo: string = 'Fluxo_Caixa_AppChurch'
+  ): void {
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const totalEntradas = movimentacoes
+      .filter(m => m.tipo === 'ENTRADA')
+      .reduce((sum, m) => sum + m.valor, 0);
+
+    const totalSaidas = movimentacoes
+      .filter(m => m.tipo === 'SAIDA')
+      .reduce((sum, m) => sum + m.valor, 0);
+
+    const saldo = totalEntradas - totalSaidas;
+
+    // Cabeçalho
+    doc.setFillColor(24, 28, 43);
+    doc.rect(0, 0, 297, 24, 'F');
+
+    doc.setFontSize(14);
+    doc.setTextColor(255, 255, 255);
+    doc.text('APPCHURCH - DEMONSTRATIVO DE FLUXO DE CAIXA', 14, 15);
+
+    // Cards resumo
+    doc.setFontSize(10);
+    doc.setTextColor(30, 41, 59);
+    doc.text(`Ano: ${info.ano || 'Todos'}  |  Entradas: ${this.formatMoeda(totalEntradas)}  |  Saídas: ${this.formatMoeda(totalSaidas)}  |  Saldo: ${this.formatMoeda(saldo)}`, 14, 34);
+
+    const tableRows = movimentacoes.map(m => [
+      m.dataBR || m.data,
+      m.tipo === 'ENTRADA' ? '+ Entrada' : '- Saída',
+      m.descricao,
+      m.categoria,
+      m.formaPagamento || 'PIX',
+      this.formatMoeda(m.valor),
+      m.status || 'Confirmado'
+    ]);
+
+    autoTable(doc, {
+      startY: 40,
+      head: [['Data', 'Tipo', 'Descrição / Histórico', 'Categoria', 'Pagamento', 'Valor (R$)', 'Status']],
+      body: tableRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: 'bold'
+      },
+      styles: {
+        fontSize: 8,
+        cellPadding: 2
+      },
+      columnStyles: {
+        0: { cellWidth: 24 },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 70 },
+        3: { cellWidth: 50 },
+        4: { cellWidth: 28 },
+        5: { cellWidth: 35, halign: 'right', fontStyle: 'bold' },
+        6: { cellWidth: 25, halign: 'center' }
+      }
+    });
+
+    doc.save(`${nomeArquivo}.pdf`);
   }
 }

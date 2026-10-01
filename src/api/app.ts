@@ -57,6 +57,7 @@ const cache = new Proxy({} as any, {
     if (prop === "celulas") return store.celulas?.data || [];
     if (prop === "capacitacoes") return store.capacitacoes?.data || [];
     if (prop === "membrosCapac") return store.membrosCapac?.data || [];
+    if (prop === "fluxoCaixa") return store.fluxoCaixa?.data || [];
     if (prop === "status") return store.status;
     if (prop === "erro") return store.erro;
     if (prop === "lastSync") return store.lastSync;
@@ -82,6 +83,10 @@ const cache = new Proxy({} as any, {
     }
     if (prop === "membrosCapac") {
       PersistentCacheManager.atualizarEntrada("membrosCapac", value);
+      return true;
+    }
+    if (prop === "fluxoCaixa") {
+      PersistentCacheManager.atualizarEntrada("fluxoCaixa", value);
       return true;
     }
     (store as any)[prop] = value;
@@ -340,6 +345,22 @@ async function carregarMembrosCapacCompleto(forceRefresh: boolean = false): Prom
   return res.data;
 }
 
+// Carrega a lista de BD_FluxoCaixa (com suporte a Stale-While-Revalidate)
+async function carregarFluxoCaixaCompleto(forceRefresh: boolean = false): Promise<any[]> {
+  const res = await PersistentCacheManager.getWithSWR(
+    'fluxoCaixa',
+    async () => {
+      let rawItems = await fetchSharePointList("BD_FluxoCaixa", 10000, true);
+      if (!Array.isArray(rawItems) || rawItems.length === 0) {
+        rawItems = await fetchSharePointList("FluxoCaixa", 10000, true);
+      }
+      return Array.isArray(rawItems) ? rawItems : [];
+    },
+    { forceRefresh }
+  );
+  return res.data;
+}
+
 async function sincronizarListasSharePoint(force: boolean = false): Promise<void> {
   console.log("[SharePoint] Sincronizando listas do SharePoint com SWR...");
   const store = PersistentCacheManager.getStore();
@@ -384,7 +405,14 @@ async function sincronizarListasSharePoint(force: boolean = false): Promise<void
     console.warn("[SharePoint] Aviso ao carregar BD_MembrosCapac:", eMC?.message || eMC);
   }
 
-  if (cache.membros.length > 0 || cache.relatorios.length > 0 || cache.celulas.length > 0 || cache.capacitacoes.length > 0) {
+  // 6. BD_FluxoCaixa
+  try {
+    await carregarFluxoCaixaCompleto(force);
+  } catch (eFC: any) {
+    console.warn("[SharePoint] Aviso ao carregar BD_FluxoCaixa:", eFC?.message || eFC);
+  }
+
+  if (cache.membros.length > 0 || cache.relatorios.length > 0 || cache.celulas.length > 0 || cache.capacitacoes.length > 0 || cache.fluxoCaixa.length > 0) {
     store.status = "CONECTADO";
     store.erro = erros.length > 0 ? erros.join("; ") : null;
     store.lastSync = new Date().toISOString();
@@ -1018,6 +1046,67 @@ app.get("/api/sharepoint/membros-capac", async (req: Request, res: Response) => 
     sucesso: true,
     total: membrosCapac.length,
     membrosCapac
+  });
+});
+
+// Obter movimentações da tabela BD_FluxoCaixa (com SWR)
+app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
+  const force = req.query.force === "true" || req.query.refresh === "true";
+  const items = await carregarFluxoCaixaCompleto(force);
+
+  // Normalização dos itens de BD_FluxoCaixa
+  const movimentacoes = (items || []).map((item: any, idx: number) => {
+    const rawData = item.Data || item.DataMovimento || item.DataLancamento || item.Created || item.DataHora || '';
+    let dataStr = '';
+    if (rawData) {
+      const d = new Date(rawData);
+      if (!isNaN(d.getTime())) {
+        dataStr = d.toISOString().split('T')[0];
+      } else {
+        dataStr = String(rawData).slice(0, 10);
+      }
+    } else {
+      dataStr = new Date().toISOString().split('T')[0];
+    }
+
+    const dObj = new Date(dataStr + 'T12:00:00');
+    const ano = !isNaN(dObj.getFullYear()) ? dObj.getFullYear() : 2026;
+    const mes = !isNaN(dObj.getMonth()) ? dObj.getMonth() + 1 : 9;
+    const dia = !isNaN(dObj.getDate()) ? dObj.getDate() : 1;
+
+    const tipoStr = String(item.Tipo || item.TipoFluxo || item.TipoMovimento || item.Operacao || '').toUpperCase();
+    const isSaida = tipoStr.includes('SAID') || tipoStr.includes('DESPESA') || tipoStr.includes('DEBIT') || Number(item.ValorSaida || item.Debito || 0) > 0;
+    const tipo = isSaida ? 'SAIDA' : 'ENTRADA';
+
+    const valorNum = Math.abs(
+      Number(item.Valor ?? item.ValorTotal ?? item.Total ?? item.ValorEntrada ?? item.ValorSaida ?? item.Credito ?? item.Debito ?? 0)
+    );
+
+    return {
+      id: item.ID || item.Id || `fc-${idx + 1}`,
+      ID: item.ID || item.Id || idx + 1,
+      data: dataStr,
+      dataBR: `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`,
+      ano,
+      mes,
+      dia,
+      tipo,
+      descricao: item.Descricao || item.Title || item.Historico || item.Observacao || (tipo === 'ENTRADA' ? 'Entrada de Recursos' : 'Despesa Geral'),
+      categoria: item.Categoria || item.PlanoContas || item.TipoConta || (tipo === 'ENTRADA' ? 'Ofertas e Doações' : 'Custos e Despesas'),
+      formaPagamento: item.FormaPagamento || item.Metodo || item.Forma || 'PIX',
+      valor: valorNum,
+      observacao: item.Observacao || item.Obs || item.Detalhes || '',
+      status: item.Status || 'Confirmado',
+      origem: 'SHAREPOINT_BD_FLUXOCAIXA',
+      raw: item
+    };
+  });
+
+  res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
+  res.json({
+    sucesso: true,
+    total: movimentacoes.length,
+    movimentacoes
   });
 });
 

@@ -20,6 +20,7 @@ interface CacheStore {
   celulas: CacheEntry<any[]> | null;
   capacitacoes: CacheEntry<any[]> | null;
   membrosCapac: CacheEntry<any[]> | null;
+  fluxoCaixa: CacheEntry<any[]> | null;
   status: "CONECTADO" | "CONECTANDO" | "ERRO";
   erro: string | null;
   lastSync: string | null;
@@ -83,6 +84,7 @@ function inicializarStore(): CacheStore {
     celulas: storeRestaurada?.celulas || null,
     capacitacoes: storeRestaurada?.capacitacoes || null,
     membrosCapac: storeRestaurada?.membrosCapac || null,
+    fluxoCaixa: storeRestaurada?.fluxoCaixa || null,
     status: storeRestaurada?.status || "CONECTADO",
     erro: null,
     lastSync: storeRestaurada?.lastSync || null,
@@ -201,7 +203,7 @@ export class PersistentCacheManager {
    * Executa a estratégia Stale-While-Revalidate para listas do SharePoint
    */
   public static async getWithSWR<T extends any[]>(
-    chave: 'membros' | 'relatorios' | 'celulas' | 'capacitacoes' | 'membrosCapac',
+    chave: 'membros' | 'relatorios' | 'celulas' | 'capacitacoes' | 'membrosCapac' | 'fluxoCaixa',
     revalidador: () => Promise<T>,
     options?: {
       freshTtlMs?: number;
@@ -275,7 +277,7 @@ export class PersistentCacheManager {
    * Dispara a busca em background sem travar a resposta HTTP do usuário
    */
   private static dispararRevalidacaoEmBackground<T extends any[]>(
-    chave: 'membros' | 'relatorios' | 'celulas' | 'capacitacoes' | 'membrosCapac',
+    chave: 'membros' | 'relatorios' | 'celulas' | 'capacitacoes' | 'membrosCapac' | 'fluxoCaixa',
     revalidador: () => Promise<T>
   ): void {
     if (this.revalidacoesEmAndamento.has(chave)) {
@@ -308,7 +310,7 @@ export class PersistentCacheManager {
    * Atualiza a entrada de cache e salva em disco
    */
   public static atualizarEntrada<T extends any[]>(
-    chave: 'membros' | 'relatorios' | 'celulas' | 'capacitacoes' | 'membrosCapac',
+    chave: 'membros' | 'relatorios' | 'celulas' | 'capacitacoes' | 'membrosCapac' | 'fluxoCaixa',
     dados: T
   ): void {
     const store = this.getStore();

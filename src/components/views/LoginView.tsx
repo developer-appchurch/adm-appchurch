@@ -22,41 +22,52 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [erroLogin, setErroLogin] = useState<string | null>(null);
   const [sucessoLogin, setSucessoLogin] = useState<string | null>(null);
   const [conexaoStatus, setConexaoStatus] = useState<'conectado' | 'erro' | 'verificando'>('verificando');
-  const [statusDetalhe, setStatusDetalhe] = useState<string>('Verificando conexão com o SharePoint...');
+  const [erroConexao, setErroConexao] = useState<string | null>(null);
   const [isModalSharePointOpen, setIsModalSharePointOpen] = useState(false);
 
   const spService = SharePointService.getInstance();
 
-  const verificarConexao = async () => {
+  const testarSincronizacao = async () => {
+    setConexaoStatus('verificando');
+    setErroConexao(null);
+
     try {
+      // 1. Testa conectividade da API com o SharePoint
       const resp = await fetch('/api/sharepoint/status').catch(() => null);
       if (!resp || !resp.ok) {
-        setConexaoStatus('conectado');
-        setStatusDetalhe('Serviço SharePoint pronto para autenticação');
-        return;
+        throw new Error(`Serviço SharePoint indisponível no backend (HTTP ${resp?.status || 'Off'}).`);
       }
-      const data = await resp.json().catch(() => null);
-      if (data) {
-        if (data.status === 'CONECTADO' || data.conta) {
-          setConexaoStatus('conectado');
-          setStatusDetalhe(
-            `Conectado ao SharePoint (${data.totalRelatorios ?? 0} relatórios • ${data.totalMembros ?? 0} membros)`
-          );
-        } else {
-          setConexaoStatus('erro');
-          setStatusDetalhe(data.erro || 'Não foi possível sincronizar com o SharePoint');
-        }
+
+      const statusData = await resp.json().catch(() => null);
+      if (statusData && statusData.status === 'ERRO' && statusData.erro) {
+        throw new Error(statusData.erro);
       }
-    } catch (err) {
+
+      // 2. Executa sincronização ativa com as listas do SharePoint
+      const syncResult = await spService.conectarEAtualizarAutomatico();
+      if (!syncResult.sucesso) {
+        throw new Error('Falha ao sincronizar com as tabelas do SharePoint. Verifique as credenciais da conta.');
+      }
+
+      // Sincronização sem erro -> Verde
       setConexaoStatus('conectado');
-      setStatusDetalhe('Serviço SharePoint pronto para autenticação');
+      setErroConexao(null);
+
+      if (onConfigChanged) {
+        onConfigChanged(spService.getConfig());
+      }
+    } catch (err: any) {
+      console.error('[LoginView] ❌ Erro ao sincronizar com o SharePoint:', err);
+      // Sincronização com erro -> Vermelho
+      setConexaoStatus('erro');
+      setErroConexao(err?.message || 'Erro ao sincronizar dados com o SharePoint. Verifique as credenciais da conta.');
     }
   };
 
-  // Verifica o status de conexão da API com o SharePoint ao carregar a tela
+  // Testa a sincronização logo que entrar na tela de login
   useEffect(() => {
-    verificarConexao();
-    const intervalo = setInterval(verificarConexao, 30000);
+    testarSincronizacao();
+    const intervalo = setInterval(testarSincronizacao, 45000);
     return () => clearInterval(intervalo);
   }, []);
 
@@ -117,9 +128,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   };
 
   const handleSharePointConectadoSucesso = () => {
-    setConexaoStatus('conectado');
-    setStatusDetalhe('Conexão com SharePoint autenticada e tabelas sincronizadas.');
-    verificarConexao();
+    testarSincronizacao();
   };
 
   return (
@@ -150,6 +159,31 @@ export const LoginView: React.FC<LoginViewProps> = ({
             ADM Tesouraria • Paz Church Sobral
           </p>
         </div>
+
+        {/* Alerta de Erro na Sincronização Inicial com SharePoint */}
+        {erroConexao && conexaoStatus === 'erro' && (
+          <div 
+            id="msg-erro-sincronizacao"
+            className="mb-5 p-3.5 rounded-xl bg-red-50 border-2 border-red-500 text-red-700 flex items-start gap-2.5 text-left animate-in fade-in slide-in-from-top-2 duration-150 shadow-sm"
+          >
+            <AlertCircle className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-extrabold text-sm tracking-wide text-red-700">
+                Erro de Sincronização com o SharePoint
+              </p>
+              <p className="text-[11px] text-red-600/90 font-medium mt-0.5">
+                {erroConexao}
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsModalSharePointOpen(true)}
+                className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+              >
+                <span>Configurar Conexão SharePoint</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Mensagem de Erro destacada conforme regra de negócio */}
         {erroLogin && (
@@ -198,7 +232,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   setLogin(e.target.value);
                   if (erroLogin) setErroLogin(null);
                 }}
-                placeholder="Digite seu login cadastrado (ex: Jfonteles, Rai, Jeff)"
+                placeholder="Digite seu login cadastrado"
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white transition-colors"
                 required
                 autoFocus
@@ -219,7 +253,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   setSenha(e.target.value);
                   if (erroLogin) setErroLogin(null);
                 }}
-                placeholder="Digite sua senha cadastrada no SharePoint"
+                placeholder="Digite sua senha cadastrada"
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:border-indigo-600 focus:bg-white transition-colors"
                 required
               />
@@ -244,13 +278,20 @@ export const LoginView: React.FC<LoginViewProps> = ({
         </form>
       </div>
 
-      {/* Sinalizador Circular Interativo no canto inferior direito (clique abre a tela de login SharePoint) */}
+      {/* Sinalizador Circular Interativo no canto inferior direito (apenas o círculo) */}
       <button
         type="button"
         id="sharepoint-status-indicator"
         onClick={() => setIsModalSharePointOpen(true)}
-        className="fixed bottom-4 right-4 z-50 flex items-center gap-2 bg-[#181c2b]/90 hover:bg-[#23293f] border border-white/10 hover:border-indigo-500/50 px-3 py-2 rounded-full shadow-xl transition-all cursor-pointer group"
-        title="Clique para abrir a Autenticação com SharePoint"
+        className="fixed bottom-4 right-4 z-50 flex items-center justify-center w-8 h-8 rounded-full bg-[#181c2b]/90 hover:bg-[#23293f] border border-white/10 hover:border-indigo-500/50 shadow-xl transition-all cursor-pointer group"
+        title={
+          conexaoStatus === 'conectado'
+            ? 'SharePoint Sincronizado com Sucesso (Clique para configurar)'
+            : conexaoStatus === 'erro'
+            ? `Erro de Sincronização: ${erroConexao || 'Falha na conexão'} (Clique para configurar)`
+            : 'Verificando e sincronizando com o SharePoint...'
+        }
+        aria-label="Status de Sincronização do SharePoint"
       >
         <span className="relative flex h-3.5 w-3.5">
           {conexaoStatus === 'conectado' && (
@@ -268,10 +309,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
           {conexaoStatus === 'verificando' && (
             <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-400 animate-pulse border border-white/20"></span>
           )}
-        </span>
-        <span className="text-[11px] font-medium text-slate-300 group-hover:text-white flex items-center gap-1">
-          <span>SharePoint</span>
-          <Settings className="w-3 h-3 text-slate-400 group-hover:text-indigo-400" />
         </span>
       </button>
     </div>

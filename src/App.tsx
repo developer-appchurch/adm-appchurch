@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { RotateCw } from 'lucide-react';
 import { ViewMode, LancamentoTesouraria, SharePointConfig, MembroItem } from './types';
 import { SharePointService } from './services/sharepointService';
 import { Sidebar } from './components/Sidebar';
@@ -16,6 +17,7 @@ export default function App() {
 
   // A primeira tela que deve aparecer é o login
   const [currentView, setCurrentView] = useState<ViewMode>('login');
+  const [refreshKey, setRefreshKey] = useState<number>(0);
   // Dados do usuário logado salvos em variável de estado (com padrão Junio Fonteles - ID: 4)
   const [usuarioLogado, setUsuarioLogado] = useState<MembroItem | null>(() => {
     try {
@@ -86,8 +88,16 @@ export default function App() {
 
   // Ação de Atualizar / Refresh
   const handleRefresh = async () => {
-    const res = await sincronizarDadosCompletos();
-    showNotification(`Sincronizado com SharePoint: ${res.relatoriosCount} relatórios e ${res.membrosCount} membros.`);
+    setIsRefreshing(true);
+    try {
+      const res = await sincronizarDadosCompletos();
+      setRefreshKey(prev => prev + 1);
+      carregarDados();
+      showNotification(`Dados sincronizados com o SharePoint com sucesso!`);
+      return res;
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Confirmar validação de envelope com dados do usuário logado
@@ -226,12 +236,32 @@ export default function App() {
           </div>
         )}
 
+        {/* Overlay de Carregamento e Sincronização em Tempo Real */}
+        {isRefreshing && (
+          <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center p-4 animate-in fade-in duration-150 select-none">
+            <div className="bg-[#161a29] border border-[#2e3752] p-6 rounded-2xl shadow-2xl flex flex-col items-center text-center max-w-sm w-full space-y-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-600/25 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shadow-md">
+                <RotateCw className="w-6 h-6 animate-spin text-indigo-400" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  Sincronizando com o SharePoint
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Atualizando tabelas e recalculando indicadores da tela...
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Área de Visualização com Scroll */}
-        <main className="flex-1 overflow-y-auto bg-[#1c2030] scrollbar-thin scrollbar-thumb-[#313752] scrollbar-track-[#1c2030]">
+        <main 
+          key={`view-${currentView}-${refreshKey}`}
+          className="flex-1 overflow-y-auto bg-[#1c2030] scrollbar-thin scrollbar-thumb-[#313752] scrollbar-track-[#1c2030]"
+        >
           {currentView === 'fluxo-caixa' && (
             <FluxoCaixaView
-              todosLancamentos={lancamentos}
-              lancamentos={lancamentos}
               anoSelecionado={anoSelecionado}
               onSelectAno={setAnoSelecionado}
               onRefresh={handleRefresh}

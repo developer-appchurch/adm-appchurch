@@ -118,6 +118,26 @@ export interface LancamentoTesouraria {
   Criado?: string;
 }
 
+export interface MovimentacaoFluxoCaixa {
+  id: string | number;
+  ID?: string | number;
+  data: string; // YYYY-MM-DD
+  dataBR?: string;
+  ano: number;
+  mes: number;
+  dia?: number;
+  tipo: 'ENTRADA' | 'SAIDA';
+  descricao: string;
+  categoria: string;
+  formaPagamento?: string;
+  valor: number;
+  observacao?: string;
+  status?: string;
+  origem?: string;
+  saldoApos?: number;
+  raw?: any;
+}
+
 export interface MembroItem {
   id: string | number;
   ID?: string | number;

@@ -2,7 +2,8 @@ import {
   LancamentoTesouraria, 
   SharePointConfig, 
   FiltrosFluxoCaixa,
-  MembroItem
+  MembroItem,
+  MovimentacaoFluxoCaixa
 } from '../types';
 import { 
   CONFIG_SHAREPOINT_PADRAO, 
@@ -562,6 +563,24 @@ export class SharePointService {
 
   public getLancamentos(): LancamentoTesouraria[] {
     return [...this.lancamentos];
+  }
+
+  /**
+   * Obtém as movimentações financeiras da tabela BD_FluxoCaixa do SharePoint.
+   */
+  public async getFluxoCaixa(force: boolean = false): Promise<MovimentacaoFluxoCaixa[]> {
+    try {
+      const res = await fetch(`/api/sharepoint/fluxo-caixa${force ? '?force=true' : ''}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.movimentacoes)) {
+          return data.movimentacoes;
+        }
+      }
+    } catch (e) {
+      console.warn('[SharePointService] Erro ao buscar BD_FluxoCaixa:', e);
+    }
+    return [];
   }
 
   /**

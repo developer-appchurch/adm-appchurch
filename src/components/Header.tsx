@@ -1,5 +1,5 @@
 import React from 'react';
-import { RotateCw, Database, FileSpreadsheet, FileText, UserCheck, Lock, Menu } from 'lucide-react';
+import { RotateCw, Database, FileSpreadsheet, FileText, UserCheck, Menu } from 'lucide-react';
 import { ViewMode } from '../types';
 
 interface HeaderProps {
@@ -97,10 +97,6 @@ export const Header: React.FC<HeaderProps> = ({
             <h2 className="text-base sm:text-xl font-bold tracking-tight text-white flex items-center gap-2">
               {getTitle()}
             </h2>
-            <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] sm:text-[11px] font-semibold">
-              <Lock className="w-3 h-3" />
-              Consulta
-            </span>
           </div>
         </div>
       </div>
