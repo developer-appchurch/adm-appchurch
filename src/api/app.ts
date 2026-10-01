@@ -1054,9 +1054,9 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
   const force = req.query.force === "true" || req.query.refresh === "true";
   const items = await carregarFluxoCaixaCompleto(force);
 
-  // Normalização dos itens de BD_FluxoCaixa
+  // Normalização estrita das colunas da tabela BD_FluxoCaixa
   const movimentacoes = (items || []).map((item: any, idx: number) => {
-    const rawData = item.Data || item.DataMovimento || item.DataLancamento || item.Created || item.DataHora || '';
+    const rawData = item.DataFluxo || item.Data || item.DataMovimento || item.DataLancamento || item.Created || item.DataHora || '';
     let dataStr = '';
     if (rawData) {
       const d = new Date(rawData);
@@ -1070,33 +1070,52 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     }
 
     const dObj = new Date(dataStr + 'T12:00:00');
-    const ano = !isNaN(dObj.getFullYear()) ? dObj.getFullYear() : 2026;
-    const mes = !isNaN(dObj.getMonth()) ? dObj.getMonth() + 1 : 9;
-    const dia = !isNaN(dObj.getDate()) ? dObj.getDate() : 1;
+    const ano = !isNaN(dObj.getFullYear()) ? dObj.getFullYear() : new Date().getFullYear();
+    const mes = !isNaN(dObj.getMonth()) ? dObj.getMonth() + 1 : new Date().getMonth() + 1;
+    const dia = !isNaN(dObj.getDate()) ? dObj.getDate() : new Date().getDate();
 
-    const tipoStr = String(item.Tipo || item.TipoFluxo || item.TipoMovimento || item.Operacao || '').toUpperCase();
-    const isSaida = tipoStr.includes('SAID') || tipoStr.includes('DESPESA') || tipoStr.includes('DEBIT') || Number(item.ValorSaida || item.Debito || 0) > 0;
-    const tipo = isSaida ? 'SAIDA' : 'ENTRADA';
+    const categoriaRaw = String(item.CategoriaFluxo || item.Categoria || item.Tipo || '').trim();
+    const categoriaNorm = categoriaRaw.toLowerCase();
+    const isSaida = categoriaNorm.includes('saída') || categoriaNorm.includes('saida') || categoriaNorm.includes('despesa');
+    const categoriaFluxo = isSaida ? 'Saída' : 'Entrada';
+
+    const tipoFluxoRaw = String(item.TipoFluxo || item.Metodo || item.FormaPagamento || '').trim().toLowerCase();
+    const tipoFluxo = tipoFluxoRaw.includes('espécie') || tipoFluxoRaw.includes('especie') || tipoFluxoRaw.includes('dinheiro') ? 'Espécie' : 'Pix';
 
     const valorNum = Math.abs(
-      Number(item.Valor ?? item.ValorTotal ?? item.Total ?? item.ValorEntrada ?? item.ValorSaida ?? item.Credito ?? item.Debito ?? 0)
+      Number(item.ValorFluxo ?? item.Valor ?? item.ValorTotal ?? item.Total ?? item.ValorEntrada ?? item.ValorSaida ?? 0)
     );
 
+    const idTesoureiro = item.Id_Tesoureiro || item.ID_TESOUREIRO || item.IdTesoureiro || 4;
+    const statusFluxo = String(item.StatusFluxo || item.Status || 'OK').trim();
+    const descricaoFluxo = item.DescricaoFluxo || item.Descricao || item.Title || item.Motivo || '';
+
+    const idVal = item.ID || item.Id || `fc-${idx + 1}`;
+
     return {
-      id: item.ID || item.Id || `fc-${idx + 1}`,
-      ID: item.ID || item.Id || idx + 1,
+      id: idVal,
+      ID: idVal,
+      CategoriaFluxo: categoriaFluxo,
+      TipoFluxo: tipoFluxo,
+      ValorFluxo: valorNum,
+      DataFluxo: dataStr,
+      Id_Tesoureiro: idTesoureiro,
+      StatusFluxo: statusFluxo,
+      DescricaoFluxo: descricaoFluxo,
+
+      // Aliases para cálculos dos cards e componentes
       data: dataStr,
       dataBR: `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`,
       ano,
       mes,
       dia,
-      tipo,
-      descricao: item.Descricao || item.Title || item.Historico || item.Observacao || (tipo === 'ENTRADA' ? 'Entrada de Recursos' : 'Despesa Geral'),
-      categoria: item.Categoria || item.PlanoContas || item.TipoConta || (tipo === 'ENTRADA' ? 'Ofertas e Doações' : 'Custos e Despesas'),
-      formaPagamento: item.FormaPagamento || item.Metodo || item.Forma || 'PIX',
+      tipo: isSaida ? 'SAIDA' : 'ENTRADA',
+      categoria: categoriaFluxo,
+      formaPagamento: tipoFluxo,
       valor: valorNum,
-      observacao: item.Observacao || item.Obs || item.Detalhes || '',
-      status: item.Status || 'Confirmado',
+      status: statusFluxo,
+      descricao: descricaoFluxo,
+      observacao: descricaoFluxo,
       origem: 'SHAREPOINT_BD_FLUXOCAIXA',
       raw: item
     };
@@ -1108,6 +1127,135 @@ app.get("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
     total: movimentacoes.length,
     movimentacoes
   });
+});
+
+// Cadastrar novo fluxo de caixa na tabela BD_FluxoCaixa
+app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
+  try {
+    const { 
+      CategoriaFluxo, 
+      TipoFluxo, 
+      ValorFluxo, 
+      DataFluxo, 
+      Id_Tesoureiro, 
+      StatusFluxo, 
+      DescricaoFluxo 
+    } = req.body;
+
+    const valorNum = Number(ValorFluxo || 0);
+    if (isNaN(valorNum) || valorNum <= 0) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "Por favor, informe um valor válido em R$ para o fluxo de caixa."
+      });
+    }
+
+    const dataFinal = String(DataFluxo || new Date().toISOString().split('T')[0]).trim();
+    const dObj = new Date(dataFinal + 'T12:00:00');
+    const ano = !isNaN(dObj.getFullYear()) ? dObj.getFullYear() : new Date().getFullYear();
+    const mes = !isNaN(dObj.getMonth()) ? dObj.getMonth() + 1 : new Date().getMonth() + 1;
+    const dia = !isNaN(dObj.getDate()) ? dObj.getDate() : new Date().getDate();
+
+    const categoriaFinal = String(CategoriaFluxo || 'Entrada').trim() === 'Saída' ? 'Saída' : 'Entrada';
+    const tipoFinal = String(TipoFluxo || 'Pix').trim() === 'Espécie' ? 'Espécie' : 'Pix';
+    const statusFinal = String(StatusFluxo || 'OK').trim() === 'Pendente' ? 'Pendente' : 'OK';
+    const descricaoFinal = String(DescricaoFluxo || '').trim();
+    const tesoureiroFinal = Id_Tesoureiro || 4;
+
+    // Obtém lista existente em cache
+    const fluxoExistente: any[] = cache.fluxoCaixa || [];
+    
+    // Gera ID sequencial numérico
+    let proximoId = 1;
+    if (fluxoExistente.length > 0) {
+      const idsNumericos = fluxoExistente.map(f => Number(f.ID || f.Id || 0)).filter(n => !isNaN(n));
+      if (idsNumericos.length > 0) {
+        proximoId = Math.max(...idsNumericos) + 1;
+      } else {
+        proximoId = fluxoExistente.length + 1;
+      }
+    }
+
+    const novoItem = {
+      id: proximoId,
+      ID: proximoId,
+      Title: descricaoFinal || `Fluxo #${proximoId}`,
+      CategoriaFluxo: categoriaFinal,
+      TipoFluxo: tipoFinal,
+      ValorFluxo: valorNum,
+      DataFluxo: dataFinal,
+      Id_Tesoureiro: tesoureiroFinal,
+      StatusFluxo: statusFinal,
+      DescricaoFluxo: descricaoFinal,
+      
+      // Aliases
+      data: dataFinal,
+      dataBR: `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`,
+      ano,
+      mes,
+      dia,
+      tipo: categoriaFinal === 'Saída' ? 'SAIDA' : 'ENTRADA',
+      categoria: categoriaFinal,
+      formaPagamento: tipoFinal,
+      valor: valorNum,
+      status: statusFinal,
+      descricao: descricaoFinal,
+      observacao: descricaoFinal,
+      Criado: new Date().toISOString()
+    };
+
+    // 1. Atualiza cache local imediatamente
+    const listaAtualizada = [novoItem, ...fluxoExistente];
+    cache.fluxoCaixa = listaAtualizada;
+
+    // 2. Tenta persistir no SharePoint Microsoft 365 (se houver credenciais e permissão na lista)
+    try {
+      const token = await getMicrosoftToken().catch(() => null);
+      if (token) {
+        const urlLista = await getSharePointListUrl("BD_FluxoCaixa", token, false).catch(() => null);
+        if (urlLista) {
+          const endpointPost = urlLista.split('?')[0];
+          await fetch(endpointPost, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/json;odata=verbose',
+              'Content-Type': 'application/json;odata=verbose'
+            },
+            body: JSON.stringify({
+              __metadata: { type: 'SP.Data.BD_x005f_FluxoCaixaListItem' },
+              Title: descricaoFinal,
+              CategoriaFluxo: categoriaFinal,
+              TipoFluxo: tipoFinal,
+              ValorFluxo: valorNum,
+              DataFluxo: dataFinal,
+              Id_Tesoureiro: String(tesoureiroFinal),
+              StatusFluxo: statusFinal,
+              DescricaoFluxo: descricaoFinal
+            })
+          }).catch(err => {
+            console.warn('[SharePoint POST BD_FluxoCaixa] Aviso ao enviar para SharePoint:', err?.message);
+          });
+        }
+      }
+    } catch (spErr) {
+      console.warn('[SharePoint POST BD_FluxoCaixa] Erro de rede ao gravar no SharePoint:', spErr);
+    }
+
+    console.log(`[BD_FluxoCaixa] ✅ Novo fluxo #${proximoId} cadastrado com sucesso: ${categoriaFinal} - R$ ${valorNum}`);
+
+    return res.json({
+      sucesso: true,
+      mensagem: "Fluxo de caixa cadastrado com sucesso na tabela BD_FluxoCaixa!",
+      item: novoItem
+    });
+  } catch (err: any) {
+    console.error("[BD_FluxoCaixa] ❌ Erro ao cadastrar novo fluxo:", err);
+    return res.status(500).json({
+      sucesso: false,
+      erro: err?.message || "Erro interno ao cadastrar fluxo de caixa."
+    });
+  }
 });
 
 // Obter métricas consolidadas para a tela Indicador Trilho

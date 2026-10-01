@@ -584,6 +584,34 @@ export class SharePointService {
   }
 
   /**
+   * Cadastra novo registro de fluxo de caixa na tabela BD_FluxoCaixa
+   */
+  public async cadastrarFluxoCaixa(payload: {
+    CategoriaFluxo: string;
+    TipoFluxo: string;
+    ValorFluxo: number;
+    DataFluxo: string;
+    Id_Tesoureiro: string | number;
+    StatusFluxo: string;
+    DescricaoFluxo: string;
+  }): Promise<{ sucesso: boolean; item?: MovimentacaoFluxoCaixa; erro?: string }> {
+    try {
+      const res = await fetch('/api/sharepoint/fluxo-caixa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok && data?.sucesso) {
+        return { sucesso: true, item: data.item };
+      }
+      return { sucesso: false, erro: data?.erro || 'Erro ao cadastrar fluxo de caixa' };
+    } catch (e: any) {
+      return { sucesso: false, erro: e?.message || 'Erro de conexão' };
+    }
+  }
+
+  /**
    * Retorna apenas os registros validados pela tesouraria (TESOURARIA_RECEB === true).
    * O total a ser mostrado deve considerar exclusivamente estes itens.
    */

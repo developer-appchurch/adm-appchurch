@@ -266,6 +266,7 @@ export default function App() {
               onSelectAno={setAnoSelecionado}
               onRefresh={handleRefresh}
               onAtualizarDados={handleRefresh}
+              usuarioLogado={usuarioLogado}
             />
           )}
 

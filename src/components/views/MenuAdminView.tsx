@@ -13,7 +13,7 @@ export const MenuAdminView: React.FC<MenuAdminViewProps> = ({ onSelectView, usua
     { id: 'relacao-envelopes', label: 'Relação Envelopes' },
     { id: 'dashboard', label: 'DashBoard' },
     { id: 'indicador-trilho', label: 'Indicador Trilho de Capacitação', highlight: true },
-    { id: 'fluxo-caixa', label: 'Fluxo de Caixa (Relatórios & SharePoint)' },
+    { id: 'fluxo-caixa', label: 'Fluxo de Caixa' },
   ];
 
   return (

@@ -8,12 +8,13 @@ import {
   Search, 
   FileSpreadsheet, 
   FileText, 
-  Printer, 
   ArrowUpRight, 
   ArrowDownRight, 
   RotateCcw,
   Wallet,
-  CheckCircle2
+  CheckCircle2,
+  PlusCircle,
+  Plus
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -22,12 +23,12 @@ import {
   XAxis, 
   YAxis, 
   Tooltip, 
-  Legend, 
   CartesianGrid 
 } from 'recharts';
-import { MovimentacaoFluxoCaixa } from '../../types';
+import { MembroItem, MovimentacaoFluxoCaixa } from '../../types';
 import { MOVIMENTACOES_INICIAIS_FLUXO_CAIXA } from '../../data/mockFluxoCaixaData';
 import { ExportService } from '../../services/exportService';
+import { NovoFluxoModal } from './NovoFluxoModal';
 
 const MESES_NOMES = [
   { valor: 'todos', label: 'Todos os Meses', abrev: 'TODOS' },
@@ -50,19 +51,22 @@ interface FluxoCaixaViewProps {
   onSelectAno?: (ano: number) => void;
   onRefresh?: () => void;
   onAtualizarDados?: () => void;
+  usuarioLogado?: MembroItem | null;
 }
 
 export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   anoSelecionado = 2026,
   onSelectAno,
-  onRefresh
+  onRefresh,
+  usuarioLogado
 }) => {
   const [movimentacoes, setMovimentacoes] = useState<MovimentacaoFluxoCaixa[]>(MOVIMENTACOES_INICIAIS_FLUXO_CAIXA);
   const [loading, setLoading] = useState<boolean>(false);
+  const [isNovoFluxoModalOpen, setIsNovoFluxoModalOpen] = useState<boolean>(false);
   
   // Filtros principais
   const [ano, setAno] = useState<number>(anoSelecionado);
-  const [mesSelecionado, setMesSelecionado] = useState<string>('9'); // Padrão Setembro
+  const [mesSelecionado, setMesSelecionado] = useState<string>('todos');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'ENTRADA' | 'SAIDA'>('todos');
   const [filtroCategoria, setFiltroCategoria] = useState<string>('todos');
   const [buscaTexto, setBuscaTexto] = useState<string>('');
@@ -78,23 +82,22 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     }
   }, [anoSelecionado]);
 
-  // Carrega movimentações da tabela BD_FluxoCaixa
+  // Carrega movimentações reais da tabela BD_FluxoCaixa
   const carregarFluxoCaixa = useCallback(async (force = false) => {
     setLoading(true);
     try {
       const resp = await fetch(`/api/sharepoint/fluxo-caixa${force ? '?force=true' : ''}`);
       if (resp.ok) {
         const data = await resp.json();
-        if (data && Array.isArray(data.movimentacoes) && data.movimentacoes.length > 0) {
+        if (data && Array.isArray(data.movimentacoes)) {
           setMovimentacoes(data.movimentacoes);
           return;
         }
       }
-      // Fallback
-      setMovimentacoes(MOVIMENTACOES_INICIAIS_FLUXO_CAIXA);
+      setMovimentacoes([]);
     } catch (err) {
-      console.warn('[FluxoCaixaView] Usando dados locais de BD_FluxoCaixa:', err);
-      setMovimentacoes(MOVIMENTACOES_INICIAIS_FLUXO_CAIXA);
+      console.warn('[FluxoCaixaView] Aviso ao carregar BD_FluxoCaixa:', err);
+      setMovimentacoes([]);
     } finally {
       setLoading(false);
     }
@@ -117,28 +120,41 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     return movimentacoes.filter(m => Number(m.ano) === Number(ano));
   }, [movimentacoes, ano]);
 
-  // Categorias disponíveis para filtro
+  // Categorias disponíveis para filtro extraídas dos cadastros reais
   const categoriasDisponiveis = useMemo(() => {
     const cats = new Set<string>();
     movimentacoes.forEach(m => {
-      if (m.categoria) cats.add(m.categoria);
+      const cat = m.CategoriaFluxo || m.categoria;
+      if (cat) cats.add(cat);
     });
     return Array.from(cats).sort();
   }, [movimentacoes]);
 
-  // Métricas do Ano e do Mês Selecionado
+  // Métricas do Saldo Atual e do Mês exclusivamente calculadas a partir dos fluxos cadastrados
   const metricas = useMemo(() => {
-    // 1. Saldo Geral / Saldo Atual (Consolidado de todas as movimentações ou do ano)
-    const totalEntradasGeral = movimentacoes.filter(m => m.tipo === 'ENTRADA').reduce((acc, m) => acc + m.valor, 0);
-    const totalSaidasGeral = movimentacoes.filter(m => m.tipo === 'SAIDA').reduce((acc, m) => acc + m.valor, 0);
+    // 1. Saldo Geral / Saldo Atual (Consolidado de todas as movimentações reais cadastradas)
+    const totalEntradasGeral = movimentacoes
+      .filter(m => (m.tipo === 'ENTRADA' || m.CategoriaFluxo === 'Entrada'))
+      .reduce((acc, m) => acc + (m.ValorFluxo ?? m.valor ?? 0), 0);
+
+    const totalSaidasGeral = movimentacoes
+      .filter(m => (m.tipo === 'SAIDA' || m.CategoriaFluxo === 'Saída'))
+      .reduce((acc, m) => acc + (m.ValorFluxo ?? m.valor ?? 0), 0);
+
     const saldoGeral = totalEntradasGeral - totalSaidasGeral;
 
-    // 2. Métricas do Mês Selecionado
+    // 2. Métricas do Mês Selecionado (ou do ano todo se 'todos')
     const numMes = mesSelecionado === 'todos' ? null : Number(mesSelecionado);
     const movsMes = movimentacoesAno.filter(m => numMes === null || Number(m.mes) === numMes);
 
-    const entradasMes = movsMes.filter(m => m.tipo === 'ENTRADA').reduce((acc, m) => acc + m.valor, 0);
-    const saidasMes = movsMes.filter(m => m.tipo === 'SAIDA').reduce((acc, m) => acc + m.valor, 0);
+    const entradasMes = movsMes
+      .filter(m => (m.tipo === 'ENTRADA' || m.CategoriaFluxo === 'Entrada'))
+      .reduce((acc, m) => acc + (m.ValorFluxo ?? m.valor ?? 0), 0);
+
+    const saidasMes = movsMes
+      .filter(m => (m.tipo === 'SAIDA' || m.CategoriaFluxo === 'Saída'))
+      .reduce((acc, m) => acc + (m.ValorFluxo ?? m.valor ?? 0), 0);
+
     const saldoMes = entradasMes - saidasMes;
 
     return {
@@ -152,7 +168,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     };
   }, [movimentacoes, movimentacoesAno, mesSelecionado]);
 
-  // Dados para o Gráfico de Barras Mensal (Janeiro a Dezembro)
+  // Dados para o Gráfico de Barras Mensal (Janeiro a Dezembro) exclusivamente dos cadastros
   const dadosGraficoMensal = useMemo(() => {
     const meses = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     const nomesAbrev = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
@@ -160,8 +176,14 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
 
     return meses.map((mNum, idx) => {
       const movsDoMes = movimentacoesAno.filter(m => Number(m.mes) === mNum);
-      const entradas = movsDoMes.filter(m => m.tipo === 'ENTRADA').reduce((acc, m) => acc + m.valor, 0);
-      const saidas = movsDoMes.filter(m => m.tipo === 'SAIDA').reduce((acc, m) => acc + m.valor, 0);
+      const entradas = movsDoMes
+        .filter(m => (m.tipo === 'ENTRADA' || m.CategoriaFluxo === 'Entrada'))
+        .reduce((acc, m) => acc + (m.ValorFluxo ?? m.valor ?? 0), 0);
+
+      const saidas = movsDoMes
+        .filter(m => (m.tipo === 'SAIDA' || m.CategoriaFluxo === 'Saída'))
+        .reduce((acc, m) => acc + (m.ValorFluxo ?? m.valor ?? 0), 0);
+
       const saldo = entradas - saidas;
 
       return {
@@ -179,30 +201,40 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   const movimentacoesFiltradas = useMemo(() => {
     return movimentacoes.filter(item => {
       // Filtro de ano
-      if (Number(item.ano) !== Number(ano)) return false;
+      if (item.ano && Number(item.ano) !== Number(ano)) return false;
 
       // Filtro de mês
       if (mesSelecionado !== 'todos' && Number(item.mes) !== Number(mesSelecionado)) return false;
 
       // Filtro de tipo (ENTRADA / SAIDA)
-      if (filtroTipo !== 'todos' && item.tipo !== filtroTipo) return false;
+      if (filtroTipo !== 'todos') {
+        const itemTipo = (item.tipo || (item.CategoriaFluxo === 'Saída' ? 'SAIDA' : 'ENTRADA'));
+        if (itemTipo !== filtroTipo) return false;
+      }
 
       // Filtro de categoria
-      if (filtroCategoria !== 'todos' && item.categoria !== filtroCategoria) return false;
+      if (filtroCategoria !== 'todos') {
+        const cat = item.CategoriaFluxo || item.categoria;
+        if (cat !== filtroCategoria) return false;
+      }
 
-      // Busca textual por descrição, categoria, forma de pagamento
+      // Busca textual por descrição, tipo, etc.
       if (buscaTexto.trim() !== '') {
         const query = buscaTexto.toLowerCase().trim();
-        const match = 
-          (item.descricao && item.descricao.toLowerCase().includes(query)) ||
-          (item.categoria && item.categoria.toLowerCase().includes(query)) ||
-          (item.formaPagamento && item.formaPagamento.toLowerCase().includes(query)) ||
-          (item.observacao && item.observacao.toLowerCase().includes(query));
+        const desc = (item.DescricaoFluxo || item.descricao || '').toLowerCase();
+        const cat = (item.CategoriaFluxo || item.categoria || '').toLowerCase();
+        const tp = (item.TipoFluxo || item.formaPagamento || '').toLowerCase();
+        const status = (item.StatusFluxo || item.status || '').toLowerCase();
+        const match = desc.includes(query) || cat.includes(query) || tp.includes(query) || status.includes(query);
         if (!match) return false;
       }
 
       return true;
-    }).sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
+    }).sort((a, b) => {
+      const dataA = a.DataFluxo || a.data || '';
+      const dataB = b.DataFluxo || b.data || '';
+      return new Date(dataB).getTime() - new Date(dataA).getTime();
+    });
   }, [movimentacoes, ano, mesSelecionado, filtroTipo, filtroCategoria, buscaTexto]);
 
   // Paginação
@@ -225,6 +257,11 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     setPaginaAtual(1);
   };
 
+  const handleNovoFluxoSalvo = (novoFluxo: MovimentacaoFluxoCaixa) => {
+    setMovimentacoes(prev => [novoFluxo, ...prev]);
+    carregarFluxoCaixa(true);
+  };
+
   const exportarExcel = () => {
     ExportService.exportarFluxoCaixaExcel(movimentacoesFiltradas, { ano, mes: mesSelecionado }, `Fluxo_Caixa_${ano}_Mes_${mesSelecionado}`);
   };
@@ -236,7 +273,15 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   return (
     <div id="fluxo-caixa-container" className="p-3.5 sm:p-6 space-y-5 max-w-[1600px] mx-auto text-slate-100">
       
-      {/* Barra Superior de Seleção de Período */}
+      {/* Modal de Cadastro de Novo Fluxo */}
+      <NovoFluxoModal
+        isOpen={isNovoFluxoModalOpen}
+        onClose={() => setIsNovoFluxoModalOpen(false)}
+        usuarioLogado={usuarioLogado}
+        onSalvoComSucesso={handleNovoFluxoSalvo}
+      />
+
+      {/* Barra Superior de Seleção de Período e Botão Novo Fluxo */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-[#161a29] border border-[#272d42] p-3.5 sm:p-4 rounded-2xl shadow-lg">
         <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
@@ -252,8 +297,19 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
           </div>
         </div>
 
-        {/* Seletores de Ano e Mês */}
-        <div className="flex items-center flex-wrap gap-2 sm:gap-3">
+        {/* Seletores de Ano e Mês + Botão Novo Fluxo */}
+        <div className="flex items-center flex-wrap gap-2 sm:gap-3 ml-auto">
+          {/* Botão Novo Fluxo */}
+          <button
+            id="btn-novo-fluxo"
+            onClick={() => setIsNovoFluxoModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md shadow-indigo-600/30 transition-all cursor-pointer"
+            title="Cadastrar Novo Fluxo de Caixa"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Novo Fluxo</span>
+          </button>
+
           {/* Seletor de Ano */}
           <div className="flex items-center gap-1.5 bg-[#202538] px-3 py-1.5 rounded-xl border border-[#313955]">
             <span className="text-xs text-slate-400 font-medium">Ano:</span>
@@ -443,7 +499,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
                 tickFormatter={(v) => `R$ ${(v / 1000).toFixed(0)}k`} 
               />
               <Tooltip 
-                content={({ active, payload, label }) => {
+                content={({ active, payload }) => {
                   if (active && payload && payload.length) {
                     const dataObj = payload[0].payload;
                     return (
@@ -481,7 +537,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
       {/* HISTÓRICO DE ÚLTIMAS MOVIMENTAÇÕES (EMBAIXO DO GRÁFICO COM FILTROS) */}
       <div className="bg-[#161a29] border border-[#272d42] rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
         
-        {/* Cabeçalho do Histórico + Botões de Exportação */}
+        {/* Cabeçalho do Histórico + Botões de Exportação e Novo Fluxo */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[#23283c] pb-3">
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -491,11 +547,19 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
               </span>
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Últimas entradas e saídas registradas
+              Movimentações financeiras cadastradas
             </p>
           </div>
 
           <div className="flex items-center flex-wrap gap-2">
+            <button
+              onClick={() => setIsNovoFluxoModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm transition-all cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Novo Fluxo</span>
+            </button>
+
             <button
               onClick={exportarExcel}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-emerald-800/80 hover:bg-emerald-700 text-white shadow-sm border border-emerald-500/40 transition-all cursor-pointer"
@@ -504,6 +568,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
               <FileSpreadsheet className="w-3.5 h-3.5" />
               <span>Excel</span>
             </button>
+
             <button
               onClick={exportarPDF}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl bg-rose-800/80 hover:bg-rose-700 text-white shadow-sm border border-rose-500/40 transition-all cursor-pointer"
@@ -583,67 +648,102 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-[#23283c] bg-[#10131e] text-slate-400 text-[11px] uppercase tracking-wider font-semibold">
+                <th className="py-3 px-4">ID</th>
                 <th className="py-3 px-4">Data</th>
-                <th className="py-3 px-4">Tipo</th>
-                <th className="py-3 px-4">Descrição / Histórico</th>
                 <th className="py-3 px-4">Categoria</th>
-                <th className="py-3 px-4">Pagamento</th>
+                <th className="py-3 px-4">Tipo (Pagamento)</th>
+                <th className="py-3 px-4">Descrição / Motivo</th>
+                <th className="py-3 px-4">Tesoureiro</th>
+                <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Valor (R$)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1e2335]">
               {movimentacoesPaginadas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-slate-400">
-                    Nenhuma movimentação encontrada para os filtros selecionados.
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <Wallet className="w-8 h-8 text-slate-500 stroke-1" />
+                      <p className="font-semibold text-sm text-slate-300">Nenhum fluxo de caixa registrado ainda.</p>
+                      <p className="text-xs text-slate-500 max-w-sm">
+                        Clique no botão "Novo Fluxo" para cadastrar sua primeira movimentação financeira.
+                      </p>
+                      <button
+                        onClick={() => setIsNovoFluxoModalOpen(true)}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md cursor-pointer"
+                      >
+                        <PlusCircle className="w-4 h-4" />
+                        <span>Cadastrar Primeiro Fluxo</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ) : (
-                movimentacoesPaginadas.map((m, idx) => (
-                  <tr key={`${m.id}-${idx}`} className="hover:bg-[#1b2031] transition-colors">
-                    <td className="py-3 px-4 font-mono text-slate-300 whitespace-nowrap">
-                      {m.dataBR || m.data}
-                    </td>
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                        m.tipo === 'ENTRADA'
-                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
-                          : 'bg-rose-950 text-rose-300 border border-rose-500/40'
+                movimentacoesPaginadas.map((m, idx) => {
+                  const isEntrada = m.CategoriaFluxo === 'Entrada' || m.tipo === 'ENTRADA';
+                  const valorExibicao = m.ValorFluxo ?? m.valor ?? 0;
+                  const dataExibicao = m.dataBR || (m.DataFluxo ? m.DataFluxo.split('-').reverse().join('/') : m.data);
+                  const tipoPagamento = m.TipoFluxo || m.formaPagamento || 'Pix';
+                  const descricaoExibicao = m.DescricaoFluxo || m.descricao || '-';
+                  const statusExibicao = m.StatusFluxo || m.status || 'OK';
+                  const idTesoureiroExibicao = m.Id_Tesoureiro || 4;
+
+                  return (
+                    <tr key={`${m.id}-${idx}`} className="hover:bg-[#1b2031] transition-colors">
+                      <td className="py-3 px-4 font-mono font-bold text-indigo-400 whitespace-nowrap">
+                        #{m.ID || m.id}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-300 whitespace-nowrap">
+                        {dataExibicao}
+                      </td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          isEntrada
+                            ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-rose-950 text-rose-300 border border-rose-500/40'
+                        }`}>
+                          {isEntrada ? (
+                            <>
+                              <ArrowUpRight className="w-3 h-3" />
+                              Entrada
+                            </>
+                          ) : (
+                            <>
+                              <ArrowDownRight className="w-3 h-3" />
+                              Saída
+                            </>
+                          )}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-300 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-lg bg-[#1e2337] border border-[#2e3654] text-[11px] text-slate-300 font-medium">
+                          {tipoPagamento}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-100 min-w-[220px]">
+                        <div>{descricaoExibicao}</div>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-400 whitespace-nowrap">
+                        ID: {idTesoureiroExibicao}
+                      </td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold ${
+                          statusExibicao === 'OK'
+                            ? 'bg-emerald-900/30 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-amber-900/30 text-amber-300 border border-amber-500/30'
+                        }`}>
+                          {statusExibicao === 'OK' ? <CheckCircle2 className="w-3 h-3" /> : null}
+                          {statusExibicao}
+                        </span>
+                      </td>
+                      <td className={`py-3 px-4 text-right font-mono font-bold text-sm whitespace-nowrap ${
+                        isEntrada ? 'text-emerald-400' : 'text-rose-400'
                       }`}>
-                        {m.tipo === 'ENTRADA' ? (
-                          <>
-                            <ArrowUpRight className="w-3 h-3" />
-                            Entrada
-                          </>
-                        ) : (
-                          <>
-                            <ArrowDownRight className="w-3 h-3" />
-                            Saída
-                          </>
-                        )}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-medium text-slate-100 min-w-[220px]">
-                      <div>{m.descricao}</div>
-                      {m.observacao && (
-                        <div className="text-[10px] text-slate-400 mt-0.5">{m.observacao}</div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-slate-300 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-lg bg-[#1e2337] border border-[#2e3654] text-[11px] text-slate-300">
-                        {m.categoria}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-slate-300 whitespace-nowrap">
-                      {m.formaPagamento || 'PIX'}
-                    </td>
-                    <td className={`py-3 px-4 text-right font-mono font-bold text-sm whitespace-nowrap ${
-                      m.tipo === 'ENTRADA' ? 'text-emerald-400' : 'text-rose-400'
-                    }`}>
-                      {m.tipo === 'ENTRADA' ? `+ ${formatBRL(m.valor)}` : `- ${formatBRL(m.valor)}`}
-                    </td>
-                  </tr>
-                ))
+                        {isEntrada ? `+ ${formatBRL(valorExibicao)}` : `- ${formatBRL(valorExibicao)}`}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -652,7 +752,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
         {/* Paginação da Tabela */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 text-xs text-slate-400">
           <div>
-            Mostrando {movimentacoesPaginadas.length} de {movimentacoesFiltradas.length} movimentações filtradas
+            Mostrando {movimentacoesPaginadas.length} de {movimentacoesFiltradas.length} movimentações registradas
           </div>
           {totalPaginas > 1 && (
             <div className="flex items-center gap-1.5">

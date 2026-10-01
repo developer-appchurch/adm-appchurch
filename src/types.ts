@@ -120,17 +120,26 @@ export interface LancamentoTesouraria {
 
 export interface MovimentacaoFluxoCaixa {
   id: string | number;
-  ID?: string | number;
-  data: string; // YYYY-MM-DD
+  ID: string | number;
+  CategoriaFluxo: 'Entrada' | 'Saída' | string;
+  TipoFluxo: 'Pix' | 'Espécie' | string;
+  ValorFluxo: number;
+  DataFluxo: string; // YYYY-MM-DD
+  Id_Tesoureiro: string | number;
+  StatusFluxo: 'OK' | 'Pendente' | string;
+  DescricaoFluxo: string; // destino - motivo
+
+  // Campos calculados e aliases para componentes
+  data?: string; // YYYY-MM-DD
   dataBR?: string;
-  ano: number;
-  mes: number;
+  ano?: number;
+  mes?: number;
   dia?: number;
-  tipo: 'ENTRADA' | 'SAIDA';
-  descricao: string;
-  categoria: string;
+  tipo?: 'ENTRADA' | 'SAIDA';
+  descricao?: string;
+  categoria?: string;
   formaPagamento?: string;
-  valor: number;
+  valor?: number;
   observacao?: string;
   status?: string;
   origem?: string;
