@@ -67,9 +67,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       <div>
         {/* Logo Section */}
-        <div id="adm-brand-header" className="px-5 pt-5 pb-4 border-b border-[#25293d] flex items-center justify-between">
-          <div className="flex flex-col items-start select-none">
-            <div className="h-[48px] w-[162px] overflow-hidden flex items-center">
+        <div id="adm-brand-header" className="px-5 pt-4 pb-3.5 border-b border-[#25293d] flex items-center justify-between">
+          <div className="flex flex-col items-start select-none max-w-full">
+            <div className="h-[62px] w-[210px] max-w-full overflow-hidden flex items-center">
               <img
                 src="/logo-appchurch-branca.png"
                 alt="AppChurch"
