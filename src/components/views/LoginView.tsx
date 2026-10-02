@@ -24,6 +24,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [conexaoStatus, setConexaoStatus] = useState<'conectado' | 'erro' | 'verificando'>('verificando');
   const [erroConexao, setErroConexao] = useState<string | null>(null);
   const [isModalSharePointOpen, setIsModalSharePointOpen] = useState(false);
+  const [logoError, setLogoError] = useState(false);
 
   const spService = SharePointService.getInstance();
 
@@ -149,11 +150,21 @@ export const LoginView: React.FC<LoginViewProps> = ({
       >
         {/* Brand Header */}
         <div className="flex flex-col items-center justify-center mb-6">
-          <img 
-            src="/Logo AppChurch 2.png" 
-            alt="AppChurch" 
-            className="h-16 w-auto object-contain mb-2 mx-auto" 
-          />
+          {!logoError ? (
+            <img 
+              src="/logo-appchurch.webp" 
+              alt="AppChurch" 
+              width={200}
+              height={64}
+              loading="eager"
+              onError={() => setLogoError(true)}
+              className="h-16 w-auto object-contain mb-2 mx-auto" 
+            />
+          ) : (
+            <h1 className="text-3xl font-extrabold text-[#242a42] tracking-tight mb-2">
+              AppChurch
+            </h1>
+          )}
           <p className="text-xs font-semibold text-slate-500 mt-0.5">
             ADM Tesouraria • Paz Church Sobral
           </p>
