@@ -4,7 +4,6 @@ import {
   FileSpreadsheet, 
   LayoutDashboard, 
   TrendingUp, 
-  User,
   LogOut,
   X,
   GraduationCap
@@ -67,27 +66,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       <div>
         {/* Logo Section */}
-        <div id="adm-brand-header" className="px-5 pt-4 pb-3.5 border-b border-[#25293d] flex items-center justify-between">
-          <div className="flex flex-col items-start select-none max-w-full">
-            <div className="h-[62px] w-[210px] max-w-full overflow-hidden flex items-center">
-              <img
-                src="/logo-appchurch-branca.png"
-                alt="AppChurch"
-                className="w-full h-full object-contain object-left select-none"
-                draggable={false}
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/logo-appchurch.png';
-                }}
-              />
-            </div>
-            <span className="text-xs font-semibold text-slate-300 mt-1 tracking-wide">
-              Tesouraria
-            </span>
+        <div id="adm-brand-header" className="px-5 py-4 border-b border-[#25293d] flex items-center justify-center relative select-none">
+          <div className="flex items-center justify-center w-full">
+            <img
+              src="/logo-appchurch-tesouraria.png"
+              alt="AppChurch Tesouraria"
+              className="w-[30%] max-w-[105px] min-w-[70px] h-auto object-contain select-none"
+              draggable={false}
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = '/logo-appchurch-branca.png';
+              }}
+            />
           </div>
           {isMobile && (
             <button
               onClick={onCloseMobile}
-              className="p-2 -mr-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#25293d] cursor-pointer"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-[#25293d] cursor-pointer"
               aria-label="Fechar menu de navegação"
             >
               <X className="w-5 h-5" />
@@ -113,14 +107,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onCloseMobile();
                   }
                 }}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 text-left cursor-pointer ${
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-sm font-medium border text-left cursor-pointer transition-colors duration-150 select-none ${
                   isActive
-                    ? 'bg-[#282d46] text-white shadow-md border border-[#3b4366]'
-                    : 'text-slate-300 hover:bg-[#202438] hover:text-white'
+                    ? 'bg-[#282d46] text-white shadow-sm border-[#3b4366]'
+                    : 'border-transparent text-slate-300 hover:bg-[#202438] hover:text-white'
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-indigo-300' : 'text-slate-400'}`} />
+                  <Icon className={`w-5 h-5 shrink-0 transition-colors duration-150 ${isActive ? 'text-indigo-300' : 'text-slate-400'}`} />
                   <span className="truncate">{item.label}</span>
                 </div>
                 {item.badge && (
@@ -135,38 +129,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer / Ações de Sessão */}
-      <div id="sidebar-footer" className="p-3 border-t border-[#25293d] space-y-2 mt-auto">
-        <div className="flex items-center gap-1.5">
-          <button
-            id={`btn-sidebar-login-sp${isMobile ? '-mob' : ''}`}
-            onClick={() => {
-              onSelectView('login');
-              if (isMobile && onCloseMobile) {
-                onCloseMobile();
-              }
-            }}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-md text-xs font-medium bg-[#1b1e2f] text-slate-300 hover:text-white hover:bg-[#25293d] border border-[#2b3048] transition-colors cursor-pointer"
-            title="Ir para tela de Login / Trocar Usuário"
-          >
-            <User className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-            <span>Trocar Usuário</span>
-          </button>
-
-          <button
-            id={`btn-logout${isMobile ? '-mob' : ''}`}
-            onClick={() => {
-              onSelectView('login');
-              if (isMobile && onCloseMobile) {
-                onCloseMobile();
-              }
-            }}
-            className="flex items-center justify-center py-2 px-3 rounded-md text-xs font-medium bg-[#1b1e2f] text-slate-400 hover:text-red-300 hover:bg-red-950/20 border border-[#2b3048] cursor-pointer gap-1.5"
-            title="Sair do Sistema"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sair</span>
-          </button>
-        </div>
+      <div id="sidebar-footer" className="p-3 border-t border-[#25293d] mt-auto">
+        <button
+          id={`btn-logout${isMobile ? '-mob' : ''}`}
+          onClick={() => {
+            onSelectView('login');
+            if (isMobile && onCloseMobile) {
+              onCloseMobile();
+            }
+          }}
+          className="w-full flex items-center justify-center py-2.5 px-3 rounded-lg text-xs font-semibold bg-[#1b1e2f] text-slate-300 hover:text-red-300 hover:bg-red-950/25 border border-[#2b3048] hover:border-red-900/50 cursor-pointer gap-2 transition-colors duration-150"
+          title="Sair do Sistema"
+        >
+          <LogOut className="w-4 h-4 text-red-400 shrink-0" />
+          <span>Sair</span>
+        </button>
       </div>
     </>
   );

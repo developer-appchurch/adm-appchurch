@@ -85,13 +85,6 @@ export default function App() {
     sincronizarDadosCompletos();
   }, [carregarDados, sincronizarDadosCompletos]);
 
-  // Sincroniza apenas caso a base esteja vazia ao navegar para outra view, sem re-render duplo
-  useEffect(() => {
-    if (currentView !== 'login' && lancamentos.length === 0 && spService.getLancamentos().length === 0) {
-      sincronizarDadosCompletos();
-    }
-  }, [currentView, lancamentos.length, sincronizarDadosCompletos, spService]);
-
   // Ação de Atualizar / Refresh
   const handleRefresh = async () => {
     setIsRefreshing(true);
