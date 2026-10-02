@@ -151,21 +151,25 @@ export const LoginView: React.FC<LoginViewProps> = ({
         {/* Brand Header */}
         <div className="flex flex-col items-center justify-center mb-6">
           {!logoError ? (
-            <img 
-              src="/logo-appchurch.webp" 
-              alt="AppChurch" 
-              width={200}
-              height={64}
-              loading="eager"
-              onError={() => setLogoError(true)}
-              className="h-16 w-auto object-contain mb-2 mx-auto" 
-            />
+            <div className="mx-auto h-[75px] w-[189px] max-w-full overflow-hidden">
+              <img
+                src="/logo-appchurch.png"
+                alt="AppChurch"
+                width={332}
+                height={332}
+                loading="eager"
+                draggable={false}
+                className="block w-full h-full object-cover select-none"
+                style={{ objectPosition: '50% 50%' }}
+                onError={() => setLogoError(true)}
+              />
+            </div>
           ) : (
-            <h1 className="text-3xl font-extrabold text-[#242a42] tracking-tight mb-2">
+            <h1 className="text-3xl font-extrabold text-[#242a42] tracking-tight mb-1">
               AppChurch
             </h1>
           )}
-          <p className="text-xs font-semibold text-slate-500 mt-0.5">
+          <p className="mt-1 text-xs font-semibold text-slate-500 leading-tight">
             ADM Tesouraria • Paz Church Sobral
           </p>
         </div>
