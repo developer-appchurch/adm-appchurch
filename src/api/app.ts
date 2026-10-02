@@ -1,9 +1,11 @@
+import path from "path";
 import express, { Request, Response } from "express";
 import { PersistentCacheManager, FRESH_TTL_MS, STALE_TTL_MS } from "./cacheManager";
 
 const app = express();
 
 app.use(express.json());
+app.use(express.static(path.join(process.cwd(), "public")));
 
 // Enable CORS for all environments (including Vercel previews)
 app.use((req, res, next) => {

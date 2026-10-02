@@ -69,13 +69,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div>
         {/* Logo Section */}
         <div id="adm-brand-header" className="px-5 pt-5 pb-4 border-b border-[#25293d] flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-white flex items-center gap-2">
-              ADM
-            </h1>
-            <p className="text-xs font-medium text-slate-400 mt-0.5 tracking-wide">
-              Tesouraria AppChurch
-            </p>
+          <div className="flex items-center gap-3">
+            <img 
+              src="/android-chrome-192x192.png" 
+              alt="AppChurch Logo" 
+              className="w-9 h-9 rounded-xl shadow-md border border-[#3b4366] object-cover shrink-0" 
+            />
+            <div>
+              <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+                ADM
+              </h1>
+              <p className="text-[11px] font-medium text-slate-400 mt-0.5 tracking-wide">
+                Tesouraria AppChurch
+              </p>
+            </div>
           </div>
           {isMobile && (
             <button

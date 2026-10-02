@@ -149,13 +149,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
       >
         {/* Brand Header */}
         <div className="flex flex-col items-center justify-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-[#242a42] flex items-center justify-center shadow-md mb-3 text-indigo-400">
-            <User className="w-7 h-7" />
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight">
-            AppChurch
-          </h1>
-          <p className="text-xs font-semibold text-slate-500 mt-1">
+          <img 
+            src="/Logo AppChurch 2.png" 
+            alt="AppChurch" 
+            className="h-16 w-auto object-contain mb-2 mx-auto" 
+          />
+          <p className="text-xs font-semibold text-slate-500 mt-0.5">
             ADM Tesouraria • Paz Church Sobral
           </p>
         </div>
