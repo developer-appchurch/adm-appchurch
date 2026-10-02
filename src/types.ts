@@ -4,7 +4,6 @@ export type ViewMode =
   | 'relacao-envelopes'
   | 'validar-relatorios'
   | 'indicador-trilho'
-  | 'menu-admin'
   | 'login';
 
 export type SetorTipo = 

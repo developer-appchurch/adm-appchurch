@@ -5,7 +5,6 @@ import {
   LayoutDashboard, 
   TrendingUp, 
   User,
-  Grid, 
   LogOut,
   X,
   GraduationCap
@@ -125,28 +124,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
       </div>
 
-      {/* Footer / Ações de Sessão e Menu switch */}
+      {/* Footer / Ações de Sessão */}
       <div id="sidebar-footer" className="p-3 border-t border-[#25293d] space-y-2 mt-auto">
-        {/* Menu Alternativo, Login SharePoint & Logout */}
         <div className="flex items-center gap-1.5">
-          <button
-            id={`btn-menu-geral${isMobile ? '-mob' : ''}`}
-            onClick={() => {
-              onSelectView('menu-admin');
-              if (isMobile && onCloseMobile) {
-                onCloseMobile();
-              }
-            }}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-md text-xs font-medium border cursor-pointer ${
-              currentView === 'menu-admin'
-                ? 'bg-[#292e4a] text-white border-indigo-400'
-                : 'bg-[#1b1e2f] text-slate-400 hover:text-slate-200 border-[#2b3048]'
-            }`}
-          >
-            <Grid className="w-3.5 h-3.5 shrink-0" />
-            <span>Menu ADM</span>
-          </button>
-          
           <button
             id={`btn-sidebar-login-sp${isMobile ? '-mob' : ''}`}
             onClick={() => {
@@ -155,15 +135,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onCloseMobile();
               }
             }}
-            className={`flex items-center justify-center gap-1 py-2 px-2.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
-              currentView === 'login'
-                ? 'bg-indigo-600 text-white border-indigo-400'
-                : 'bg-[#1b1e2f] text-slate-300 hover:text-white hover:bg-slate-800 border-[#2b3048]'
-            }`}
-            title="Ir para tela de Login"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-md text-xs font-medium bg-[#1b1e2f] text-slate-300 hover:text-white hover:bg-[#25293d] border border-[#2b3048] transition-colors cursor-pointer"
+            title="Ir para tela de Login / Trocar Usuário"
           >
             <User className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-            <span>Login</span>
+            <span>Trocar Usuário</span>
           </button>
 
           <button
@@ -174,10 +150,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onCloseMobile();
               }
             }}
-            className="flex items-center justify-center p-2 rounded-md text-xs font-medium bg-[#1b1e2f] text-slate-400 hover:text-red-300 hover:bg-red-950/20 border border-[#2b3048] cursor-pointer"
+            className="flex items-center justify-center py-2 px-3 rounded-md text-xs font-medium bg-[#1b1e2f] text-slate-400 hover:text-red-300 hover:bg-red-950/20 border border-[#2b3048] cursor-pointer gap-1.5"
             title="Sair do Sistema"
           >
             <LogOut className="w-3.5 h-3.5" />
+            <span>Sair</span>
           </button>
         </div>
       </div>

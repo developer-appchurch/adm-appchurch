@@ -9,7 +9,6 @@ import { DashboardView } from './components/views/DashboardView';
 import { RelacaoEnvelopesView } from './components/views/RelacaoEnvelopesView';
 import { ValidarRelatoriosView } from './components/views/ValidarRelatoriosView';
 import { IndicadorTrilhoView } from './components/views/IndicadorTrilhoView';
-import { MenuAdminView } from './components/views/MenuAdminView';
 import { LoginView } from './components/views/LoginView';
 
 export default function App() {
@@ -157,9 +156,9 @@ export default function App() {
       console.warn('[App] Aviso ao atualizar config com usuário:', eCfg);
     }
 
-    // Navega diretamente para a tela de Menu do aplicativo
-    console.log('[App] Mudando currentView de "login" para "menu-admin"...');
-    setCurrentView('menu-admin');
+    // Navega diretamente para a tela de Validar Relatórios
+    console.log('[App] Mudando currentView de "login" para "validar-relatorios"...');
+    setCurrentView('validar-relatorios');
     carregarDados();
     showNotification(`Bem-vindo(a), ${membro.nome}!`);
 
@@ -177,16 +176,6 @@ export default function App() {
         configSharePoint={sharePointConfig}
         onConfigChanged={handleSharePointConfigSaved}
         onSelectView={setCurrentView}
-      />
-    );
-  }
-
-  // Se a view for Menu Administrativo (navega para cá após login bem-sucedido)
-  if (currentView === 'menu-admin') {
-    return (
-      <MenuAdminView 
-        onSelectView={setCurrentView} 
-        usuarioLogado={usuarioLogado}
       />
     );
   }

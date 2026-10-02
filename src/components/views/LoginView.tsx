@@ -146,7 +146,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
       <div 
         id="login-card" 
-        className="bg-white rounded-2xl p-7 sm:p-9 w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200 text-center relative"
+        className="bg-white rounded-2xl p-6 sm:p-7 w-full max-w-[400px] shadow-2xl animate-in zoom-in-95 duration-200 text-center relative"
       >
         {/* Brand Header */}
         <div className="flex flex-col items-center justify-center mb-6">
@@ -228,7 +228,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
             <div>
               <p className="font-bold text-xs">{sucessoLogin}</p>
-              <p className="text-[11px] text-emerald-700">Carregando o Menu Administrativo...</p>
+              <p className="text-[11px] text-emerald-700">Carregando Validar Relatórios...</p>
             </div>
           </div>
         )}
