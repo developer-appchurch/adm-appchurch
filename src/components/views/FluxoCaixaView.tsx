@@ -51,8 +51,8 @@ const MESES_NOMES = [
 ];
 
 interface FluxoCaixaViewProps {
-  anoSelecionado?: number;
-  onSelectAno?: (ano: number) => void;
+  anoSelecionado?: number | string;
+  onSelectAno?: (ano: number | string) => void;
   onRefresh?: () => void;
   onAtualizarDados?: () => void;
   usuarioLogado?: MembroItem | null;
@@ -75,7 +75,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   });
   
   // Filtros principais
-  const [ano, setAno] = useState<number>(anoSelecionado);
+  const [ano, setAno] = useState<number | string>(anoSelecionado);
   const [mesSelecionado, setMesSelecionado] = useState<string>('todos');
   const [filtroTipo, setFiltroTipo] = useState<'todos' | 'ENTRADA' | 'SAIDA'>('todos');
   const [filtroCategoria, setFiltroCategoria] = useState<string>('todos');
@@ -87,10 +87,40 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
 
   // Sincroniza ano externo caso fornecido
   useEffect(() => {
-    if (anoSelecionado) {
+    if (anoSelecionado !== undefined) {
       setAno(anoSelecionado);
     }
   }, [anoSelecionado]);
+
+  const isTodosAnos = String(ano).toLowerCase() === 'todos' || String(ano).toLowerCase() === 'todos os anos';
+
+  // Anos disponíveis extraídos das movimentações
+  const anosDisponiveis = useMemo(() => {
+    const anosSet = new Set<number>();
+    const anoAtualReal = new Date().getFullYear();
+    anosSet.add(anoAtualReal);
+
+    movimentacoes.forEach(m => {
+      if (m.ano && Number(m.ano) > 2000) {
+        anosSet.add(Number(m.ano));
+      } else if (m.data) {
+        const y = new Date(m.data).getFullYear();
+        if (y > 2000) anosSet.add(y);
+      }
+    });
+
+    return Array.from(anosSet).sort((a, b) => b - a);
+  }, [movimentacoes]);
+
+  // Opções de meses limitadas até o mês atual quando ano corrente
+  const mesesOpcoes = useMemo(() => {
+    const hoje = new Date();
+    if (!isTodosAnos && Number(ano) === hoje.getFullYear()) {
+      const mesLimite = hoje.getMonth() + 1;
+      return MESES_NOMES.filter(m => m.valor === 'todos' || parseInt(m.valor, 10) <= mesLimite);
+    }
+    return MESES_NOMES;
+  }, [isTodosAnos, ano]);
 
   // Carrega movimentações reais da tabela BD_FluxoCaixa
   const carregarFluxoCaixa = useCallback(async (force = false) => {
@@ -149,8 +179,8 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
 
   // Movimentações do Ano Selecionado
   const movimentacoesAno = useMemo(() => {
-    return movimentacoes.filter(m => Number(m.ano) === Number(ano));
-  }, [movimentacoes, ano]);
+    return movimentacoes.filter(m => isTodosAnos || Number(m.ano) === Number(ano));
+  }, [movimentacoes, isTodosAnos, ano]);
 
   // Categorias disponíveis para filtro extraídas dos cadastros reais
   const categoriasDisponiveis = useMemo(() => {
@@ -233,7 +263,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
   const movimentacoesFiltradas = useMemo(() => {
     return movimentacoes.filter(item => {
       // Filtro de ano
-      if (item.ano && Number(item.ano) !== Number(ano)) return false;
+      if (!isTodosAnos && item.ano && Number(item.ano) !== Number(ano)) return false;
 
       // Filtro de mês
       if (mesSelecionado !== 'todos' && Number(item.mes) !== Number(mesSelecionado)) return false;
@@ -267,7 +297,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
       const dataB = b.DataFluxo || b.data || '';
       return new Date(dataB).getTime() - new Date(dataA).getTime();
     });
-  }, [movimentacoes, ano, mesSelecionado, filtroTipo, filtroCategoria, buscaTexto]);
+  }, [movimentacoes, isTodosAnos, ano, mesSelecionado, filtroTipo, filtroCategoria, buscaTexto]);
 
   // Paginação
   const totalPaginas = Math.ceil(movimentacoesFiltradas.length / itensPorPagina) || 1;
@@ -276,7 +306,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
     return movimentacoesFiltradas.slice(inicio, inicio + itensPorPagina);
   }, [movimentacoesFiltradas, paginaAtual, itensPorPagina]);
 
-  const handleMudarAno = (novoAno: number) => {
+  const handleMudarAno = (novoAno: number | string) => {
     setAno(novoAno);
     setPaginaAtual(1);
     if (onSelectAno) onSelectAno(novoAno);
@@ -466,13 +496,14 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
           <div className="flex items-center gap-1.5 bg-[#202538] px-3 py-1.5 rounded-xl border border-[#313955]">
             <span className="text-xs text-slate-400 font-medium">Ano:</span>
             <select
-              value={ano}
-              onChange={(e) => handleMudarAno(Number(e.target.value))}
+              value={isTodosAnos ? 'todos' : ano}
+              onChange={(e) => handleMudarAno(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
               className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
             >
-              <option value={2026} className="bg-[#181c2b] text-white">2026</option>
-              <option value={2025} className="bg-[#181c2b] text-white">2025</option>
-              <option value={2024} className="bg-[#181c2b] text-white">2024</option>
+              <option value="todos" className="bg-[#181c2b] text-white">Todos os Anos</option>
+              {anosDisponiveis.map(a => (
+                <option key={a} value={a} className="bg-[#181c2b] text-white">{a}</option>
+              ))}
             </select>
           </div>
 
@@ -487,7 +518,7 @@ export const FluxoCaixaView: React.FC<FluxoCaixaViewProps> = ({
               }}
               className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
             >
-              {MESES_NOMES.map(m => (
+              {mesesOpcoes.map(m => (
                 <option key={m.valor} value={m.valor} className="bg-[#181c2b] text-white">
                   {m.label}
                 </option>

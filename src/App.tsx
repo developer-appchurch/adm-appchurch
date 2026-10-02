@@ -34,15 +34,24 @@ export default function App() {
       setor: 'Fire'
     };
   });
-  const [anoSelecionado, setAnoSelecionado] = useState<number>(2026);
-  const [mesEnvelopes, setMesEnvelopes] = useState<string>('9');
+  // Estados de Filtro Independentes por Tela (Dashboard, Validar Relatórios, Envelopes, Fluxo de Caixa)
+  const [anoDashboard, setAnoDashboard] = useState<number | string>(2026);
+  const [anoValidar, setAnoValidar] = useState<number | string>(2026);
+  const [anoEnvelopes, setAnoEnvelopes] = useState<number | string>(2026);
+  const [mesEnvelopes, setMesEnvelopes] = useState<string>('todos');
   const [setorEnvelopes, setSetorEnvelopes] = useState<string>('Safira');
+  const [anoFluxo, setAnoFluxo] = useState<number | string>(2026);
   const [setoresDisponiveisEnvelopes, setSetoresDisponiveisEnvelopes] = useState<string[]>([]);
   const [lancamentos, setLancamentos] = useState<LancamentoTesouraria[]>([]);
   const [sharePointConfig, setSharePointConfig] = useState<SharePointConfig>(spService.getConfig());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [notificacao, setNotificacao] = useState<string | null>(null);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  // Navegação segura evitando recarregamento duplo ao clicar na mesma tela
+  const handleSelectView = useCallback((novaView: ViewMode) => {
+    setCurrentView(prev => (prev === novaView ? prev : novaView));
+  }, []);
 
   const showNotification = (msg: string) => {
     setNotificacao(msg);
@@ -54,7 +63,6 @@ export default function App() {
   // Carrega lançamentos iniciais e conecta automaticamente ao SharePoint
   const carregarDados = useCallback(() => {
     const dados = spService.getLancamentos();
-    console.log(`[App] carregarDados executado. Lançamentos carregados: ${dados.length}`);
     setLancamentos(dados);
     setSharePointConfig(spService.getConfig());
   }, [spService]);
@@ -77,13 +85,12 @@ export default function App() {
     sincronizarDadosCompletos();
   }, [carregarDados, sincronizarDadosCompletos]);
 
-  // Atualiza dados sempre que a visualização mudar
+  // Sincroniza apenas caso a base esteja vazia ao navegar para outra view, sem re-render duplo
   useEffect(() => {
-    carregarDados();
-    if (currentView !== 'login' && spService.getLancamentos().length === 0) {
+    if (currentView !== 'login' && lancamentos.length === 0 && spService.getLancamentos().length === 0) {
       sincronizarDadosCompletos();
     }
-  }, [currentView, carregarDados, sincronizarDadosCompletos, spService]);
+  }, [currentView, lancamentos.length, sincronizarDadosCompletos, spService]);
 
   // Ação de Atualizar / Refresh
   const handleRefresh = async () => {
@@ -180,13 +187,16 @@ export default function App() {
     );
   }
 
+  const anoAtivoHeader = currentView === 'relacao-envelopes' ? anoEnvelopes : currentView === 'validar-relatorios' ? anoValidar : currentView === 'fluxo-caixa' ? anoFluxo : anoDashboard;
+  const setAnoAtivoHeader = currentView === 'relacao-envelopes' ? setAnoEnvelopes : currentView === 'validar-relatorios' ? setAnoValidar : currentView === 'fluxo-caixa' ? setAnoFluxo : setAnoDashboard;
+
   return (
     <div id="app-root-container" className="flex h-screen bg-[#1c2030] text-slate-100 overflow-hidden font-sans">
       {/* Sidebar de Navegação */}
       <Sidebar
         currentView={currentView}
         onSelectView={(v) => {
-          setCurrentView(v);
+          handleSelectView(v);
           setIsMobileNavOpen(false);
         }}
         sharepointStatus={sharePointConfig.status}
@@ -202,9 +212,10 @@ export default function App() {
         {currentView !== 'dashboard' && (
           <Header
             currentView={currentView}
-            onSelectView={setCurrentView}
-            anoSelecionado={anoSelecionado}
-            onSelectAno={setAnoSelecionado}
+            onSelectView={handleSelectView}
+            anoSelecionado={anoAtivoHeader}
+            onSelectAno={setAnoAtivoHeader}
+            lancamentos={lancamentos}
             usuarioConectado={sharePointConfig.usuarioConectado}
             onRefresh={handleRefresh}
             isRefreshing={isRefreshing}
@@ -251,8 +262,8 @@ export default function App() {
         >
           {currentView === 'fluxo-caixa' && (
             <FluxoCaixaView
-              anoSelecionado={anoSelecionado}
-              onSelectAno={setAnoSelecionado}
+              anoSelecionado={anoFluxo}
+              onSelectAno={setAnoFluxo}
               onRefresh={handleRefresh}
               onAtualizarDados={handleRefresh}
               usuarioLogado={usuarioLogado}
@@ -262,11 +273,11 @@ export default function App() {
           {currentView === 'dashboard' && (
             <DashboardView
               lancamentos={lancamentos}
-              anoSelecionado={anoSelecionado}
-              onSelectAno={setAnoSelecionado}
+              anoSelecionado={anoDashboard}
+              onSelectAno={setAnoDashboard}
               onRefresh={handleRefresh}
               usuarioConectado={sharePointConfig.usuarioConectado}
-              onSelectView={setCurrentView}
+              onSelectView={handleSelectView}
               onToggleMobileMenu={() => setIsMobileNavOpen(prev => !prev)}
             />
           )}
@@ -274,8 +285,8 @@ export default function App() {
           {currentView === 'relacao-envelopes' && (
             <RelacaoEnvelopesView
               lancamentos={lancamentos}
-              anoSelecionado={anoSelecionado}
-              onSelectAno={setAnoSelecionado}
+              anoSelecionado={anoEnvelopes}
+              onSelectAno={setAnoEnvelopes}
               mesSelecionado={mesEnvelopes}
               onSelectMes={setMesEnvelopes}
               setorSelecionado={setorEnvelopes}
@@ -288,8 +299,8 @@ export default function App() {
           {currentView === 'validar-relatorios' && (
             <ValidarRelatoriosView
               lancamentos={lancamentos}
-              anoSelecionado={anoSelecionado}
-              onSelectAno={setAnoSelecionado}
+              anoSelecionado={anoValidar}
+              onSelectAno={setAnoValidar}
               usuarioLogado={usuarioLogado}
               onAtualizarLancamento={handleAtualizarLancamento}
               onConfirmarLancamento={handleConfirmarLancamento}

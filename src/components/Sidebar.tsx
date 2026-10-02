@@ -68,13 +68,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div>
         {/* Logo Section */}
         <div id="adm-brand-header" className="px-5 pt-5 pb-4 border-b border-[#25293d] flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
-              ADM
-            </h1>
-            <p className="text-[11px] font-medium text-slate-400 mt-0.5 tracking-wide">
-              Tesouraria AppChurch
-            </p>
+          <div className="flex flex-col items-start select-none">
+            <div className="h-[48px] w-[162px] overflow-hidden flex items-center">
+              <img
+                src="/logo-appchurch-branca.png"
+                alt="AppChurch"
+                className="w-full h-full object-contain object-left select-none"
+                draggable={false}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/logo-appchurch.png';
+                }}
+              />
+            </div>
+            <span className="text-xs font-semibold text-slate-300 mt-1 tracking-wide">
+              Tesouraria
+            </span>
           </div>
           {isMobile && (
             <button
@@ -98,7 +106,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={item.id}
                 id={`nav-btn-${item.id}${isMobile ? '-mob' : ''}`}
                 onClick={() => {
-                  onSelectView(item.id);
+                  if (currentView !== item.id) {
+                    onSelectView(item.id);
+                  }
                   if (isMobile && onCloseMobile) {
                     onCloseMobile();
                   }

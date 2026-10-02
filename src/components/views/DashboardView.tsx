@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { RotateCw, ShieldCheck, Lock, Menu } from 'lucide-react';
 import { LancamentoTesouraria, ViewMode } from '../../types';
+import { SharePointService } from '../../services/sharepointService';
 
 interface DashboardViewProps {
   lancamentos: LancamentoTesouraria[];
-  anoSelecionado: number;
-  onSelectAno: (ano: number) => void;
+  anoSelecionado: number | string;
+  onSelectAno: (ano: number | string) => void;
   onRefresh: () => void;
   usuarioConectado?: { nome: string; email: string } | null;
   onSelectView?: (view: ViewMode) => void;
@@ -43,11 +44,70 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectView,
   onToggleMobileMenu
 }) => {
-  const [mesSelecionado, setMesSelecionado] = useState('SETEMBRO');
-  const [bdCelulas, setBdCelulas] = useState<CelulaSharePointItem[]>([]);
+  const spService = useMemo(() => SharePointService.getInstance(), []);
 
-  // Carrega células da lista BD_celulas do SharePoint
+  const [mesSelecionado, setMesSelecionado] = useState(() => {
+    const hoje = new Date();
+    const mesAtualIndex = hoje.getMonth();
+    return NOMES_MESES[mesAtualIndex] || 'SETEMBRO';
+  });
+  // Inicializa já com células do cache local para evitar flash de tela e duplo carregamento
+  const [bdCelulas, setBdCelulas] = useState<CelulaSharePointItem[]>(() => {
+    const cached = spService.getCelulas();
+    return Array.isArray(cached) ? cached : [];
+  });
+  const scrollContainerRef1 = React.useRef<HTMLDivElement>(null);
+  const scrollContainerRef2 = React.useRef<HTMLDivElement>(null);
+
+  const isTodosAnos = String(anoSelecionado).toLowerCase() === 'todos' || String(anoSelecionado).toLowerCase() === 'todos os anos' || Number(anoSelecionado) === 0;
+  const isTodosMeses = String(mesSelecionado).toUpperCase() === 'TODOS' || String(mesSelecionado).toUpperCase() === 'TODOS OS MESES';
+  const isModoAnosNoGrafico = isTodosAnos && !isTodosMeses;
+
+  // Anos disponíveis extraídos dos lançamentos no banco de dados (do mais recente ao mais antigo)
+  const anosDisponiveis = useMemo(() => {
+    const anosSet = new Set<number>();
+    const anoAtualReal = new Date().getFullYear();
+    anosSet.add(anoAtualReal);
+
+    lancamentos.forEach(l => {
+      if (l.ano && typeof l.ano === 'number' && l.ano > 2000) {
+        anosSet.add(l.ano);
+      } else if (l.dataBR && l.dataBR.includes('/')) {
+        const parts = l.dataBR.split('/');
+        const a = parseInt(parts[2], 10);
+        if (a && a > 2000) anosSet.add(a);
+      } else if (l.data && l.data.includes('-')) {
+        const a = parseInt(l.data.split('-')[0], 10);
+        if (a && a > 2000) anosSet.add(a);
+      }
+    });
+
+    return Array.from(anosSet).sort((a, b) => b - a);
+  }, [lancamentos]);
+
+  // Meses disponíveis para o ano selecionado: se for o ano atual, exibe somente até o mês atual + opção TODOS OS MESES
+  const mesesDisponiveis = useMemo(() => {
+    const hoje = new Date();
+    const anoAtualReal = hoje.getFullYear();
+    const mesAtualIndex = hoje.getMonth(); // 0 = Jan, 9 = Out (Outubro)
+
+    let baseMeses = NOMES_MESES;
+    if (!isTodosAnos && Number(anoSelecionado) === anoAtualReal) {
+      baseMeses = NOMES_MESES.slice(0, mesAtualIndex + 1);
+    }
+    return ['TODOS OS MESES', ...baseMeses];
+  }, [anoSelecionado, isTodosAnos]);
+
+  // Se o mês selecionado não estiver na lista de meses permitidos para o ano, ajusta para o mais recente disponível
   useEffect(() => {
+    if (mesesDisponiveis.length > 0 && !mesesDisponiveis.includes(mesSelecionado)) {
+      setMesSelecionado(mesesDisponiveis[mesesDisponiveis.length - 1]);
+    }
+  }, [mesesDisponiveis, mesSelecionado]);
+
+  // Carrega células da lista BD_celulas do SharePoint se ainda não estiverem carregadas
+  useEffect(() => {
+    if (bdCelulas.length > 0) return;
     let isMounted = true;
     fetch('/api/sharepoint/celulas')
       .then(res => res.json())
@@ -63,35 +123,73 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [bdCelulas.length]);
+
+  // Auto-scroll inicial para deixar o mês atual/selecionado à mostra nas colunas dos gráficos
+  useEffect(() => {
+    if (isModoAnosNoGrafico) return; // Não faz scroll quando exibe anos lado a lado
+
+    const scrollToActiveMonth = () => {
+      let mesAbrevAlvo = 'SET';
+      if (!isTodosMeses) {
+        const idxMes = NOMES_MESES.indexOf(mesSelecionado.toUpperCase());
+        if (idxMes !== -1) mesAbrevAlvo = NOMES_MESES_ABREV[idxMes];
+      } else {
+        const hoje = new Date();
+        mesAbrevAlvo = NOMES_MESES_ABREV[hoje.getMonth()] || 'SET';
+      }
+
+      const containers = [scrollContainerRef1.current, scrollContainerRef2.current];
+      containers.forEach(container => {
+        if (!container) return;
+        const target = container.querySelector(`[data-mes="${mesAbrevAlvo}"]`) as HTMLElement;
+        if (target) {
+          const scrollPos = target.offsetLeft - (container.clientWidth / 2) + (target.clientWidth / 2);
+          container.scrollTo({ left: Math.max(0, scrollPos), behavior: 'smooth' });
+        } else {
+          container.scrollTo({ left: container.scrollWidth, behavior: 'smooth' });
+        }
+      });
+    };
+
+    const timer = setTimeout(scrollToActiveMonth, 120);
+    return () => clearTimeout(timer);
+  }, [mesSelecionado, anoSelecionado, isTodosMeses, isModoAnosNoGrafico]);
 
   const numMesSelecionado = useMemo(() => {
+    if (isTodosMeses) return 0;
     const idx = NOMES_MESES.indexOf(mesSelecionado.toUpperCase());
-    return idx !== -1 ? idx + 1 : 9;
-  }, [mesSelecionado]);
+    return idx !== -1 ? idx + 1 : 0;
+  }, [mesSelecionado, isTodosMeses]);
 
   // REGRA PRINCIPAL: Total a ser mostrado sendo SOMENTE os validados pela coluna TESOURARIA_RECEB
   const lancamentosValidados = useMemo(() => {
     return lancamentos.filter(l => l.TESOURARIA_RECEB === true);
   }, [lancamentos]);
 
-  // Lançamentos validados do ano e mês selecionado
+  // Lançamentos validados do ano e mês selecionado (suporta TODOS OS ANOS e TODOS OS MESES)
   const lancamentosMesAtual = useMemo(() => {
     return lancamentosValidados.filter(l => {
       const itemAno = l.ano !== undefined ? Number(l.ano) : (l.data ? new Date(l.data).getFullYear() : 0);
       const itemMes = l.mes !== undefined ? Number(l.mes) : (l.data ? new Date(l.data).getMonth() + 1 : 0);
-      return itemAno === Number(anoSelecionado) && itemMes === Number(numMesSelecionado);
+      
+      const matchAno = isTodosAnos || itemAno === Number(anoSelecionado);
+      const matchMes = isTodosMeses || itemMes === Number(numMesSelecionado);
+      return matchAno && matchMes;
     });
-  }, [lancamentosValidados, anoSelecionado, numMesSelecionado]);
+  }, [lancamentosValidados, isTodosAnos, anoSelecionado, isTodosMeses, numMesSelecionado]);
 
   // Todos os relatórios lançados (registrados) do ano e mês selecionado
   const lancamentosTodosMesAtual = useMemo(() => {
     return lancamentos.filter(l => {
       const itemAno = l.ano !== undefined ? Number(l.ano) : (l.data ? new Date(l.data).getFullYear() : 0);
       const itemMes = l.mes !== undefined ? Number(l.mes) : (l.data ? new Date(l.data).getMonth() + 1 : 0);
-      return itemAno === Number(anoSelecionado) && itemMes === Number(numMesSelecionado);
+      
+      const matchAno = isTodosAnos || itemAno === Number(anoSelecionado);
+      const matchMes = isTodosMeses || itemMes === Number(numMesSelecionado);
+      return matchAno && matchMes;
     });
-  }, [lancamentos, anoSelecionado, numMesSelecionado]);
+  }, [lancamentos, isTodosAnos, anoSelecionado, isTodosMeses, numMesSelecionado]);
 
   // Totais do Mês Selecionado (somente TESOURARIA_RECEB === true)
   const totalMesPix = useMemo(() => {
@@ -106,11 +204,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Células Ativas: Quantidade de células da BD_celulas que foram criadas até o mês e ano selecionado
   const celulasAtivas = useMemo(() => {
-    // Se BD_celulas estiver carregada da API
-    if (bdCelulas.length > 0) {
-      // Data limite: último milissegundo do mês e ano selecionado
-      const dataLimite = new Date(anoSelecionado, numMesSelecionado, 0, 23, 59, 59, 999);
+    const anoAlvo = isTodosAnos ? new Date().getFullYear() : Number(anoSelecionado);
+    const mesAlvo = isTodosMeses ? 12 : numMesSelecionado;
+    const dataLimite = new Date(anoAlvo, mesAlvo, 0, 23, 59, 59, 999);
 
+    if (bdCelulas.length > 0) {
       const filtradas = bdCelulas.filter(c => {
         const dtStr = c.Criado || c.Created;
         if (!dtStr) return true; // Se não tiver data de criação registrada, considera ativa
@@ -126,24 +224,98 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const setCelulas = new Set<string>();
     lancamentos.forEach(l => {
       const nome = l.Célula || l.celulaNome;
-      if (nome && (!l.ano || l.ano <= anoSelecionado)) {
+      if (nome && (isTodosAnos || !l.ano || l.ano <= anoAlvo)) {
         setCelulas.add(nome);
       }
     });
     return setCelulas.size > 0 ? setCelulas.size : 67;
-  }, [bdCelulas, anoSelecionado, numMesSelecionado, lancamentos]);
+  }, [bdCelulas, isTodosAnos, anoSelecionado, isTodosMeses, numMesSelecionado, lancamentos]);
 
-  // Relatórios Previstos = Quantidade de Células Ativas * 4 (Base de 4 Semanas)
-  const relatoriosPrevistos = celulasAtivas * 4;
+  // Relatórios Previstos = Quantidade de Células Ativas * 4 (se todos os meses, multiplica pelos meses)
+  const fatorMeses = useMemo(() => {
+    if (isTodosMeses) {
+      return (isTodosAnos || Number(anoSelecionado) === new Date().getFullYear() ? new Date().getMonth() + 1 : 12);
+    }
+    return 1;
+  }, [isTodosMeses, isTodosAnos, anoSelecionado]);
 
-  // Dados mensais para o gráfico (calculados dinamicamente com base em TESOURARIA_RECEB === true no Ano Selecionado)
+  const relatoriosPrevistos = useMemo(() => {
+    if (isTodosAnos && isTodosMeses) {
+      const qtdAnos = Math.max(1, anosDisponiveis.length);
+      return celulasAtivas * 4 * fatorMeses * qtdAnos;
+    }
+    if (isTodosAnos && !isTodosMeses) {
+      const qtdAnos = Math.max(1, anosDisponiveis.length);
+      return celulasAtivas * 4 * qtdAnos;
+    }
+    return celulasAtivas * 4 * fatorMeses;
+  }, [isTodosAnos, isTodosMeses, celulasAtivas, fatorMeses, anosDisponiveis]);
+
+  // Dados para o gráfico:
+  // 1) Se for TODOS OS ANOS + MÊS ESPECÍFICO => exibe os ANOS no eixo X com o total daquele mês em cada ano
+  // 2) Se for ANO ESPECÍFICO ou TODOS OS ANOS + TODOS OS MESES => exibe os 12 MESES no eixo X
   const mesesGrafico = useMemo(() => {
+    // CASO A: TODOS OS ANOS + MÊS ESPECÍFICO
+    if (isModoAnosNoGrafico) {
+      const anosOrdenados = [...anosDisponiveis].sort((a, b) => a - b);
+
+      return anosOrdenados.map(anoItem => {
+        const doAnoEMes = lancamentosValidados.filter(l => {
+          const itemAno = l.ano !== undefined ? Number(l.ano) : (l.data ? new Date(l.data).getFullYear() : 0);
+          const itemMes = l.mes !== undefined ? Number(l.mes) : (l.data ? new Date(l.data).getMonth() + 1 : 0);
+          return itemAno === anoItem && itemMes === Number(numMesSelecionado);
+        });
+
+        const esp = doAnoEMes.reduce((acc, curr) => acc + Number(curr.OfertaEspecie ?? curr.valorEspecie ?? 0), 0);
+        const pix = doAnoEMes.reduce((acc, curr) => {
+          const v = curr.ValorOferta ?? curr.valorPix ?? (curr.Bairro && !isNaN(Number(curr.Bairro)) ? Number(curr.Bairro) : 0);
+          return acc + Number(v);
+        }, 0);
+
+        let ativas = 0;
+        if (bdCelulas.length > 0) {
+          const dataLimite = new Date(anoItem, numMesSelecionado, 0, 23, 59, 59, 999);
+          ativas = bdCelulas.filter(c => {
+            const dtStr = c.Criado || c.Created;
+            if (!dtStr) return true;
+            const dtCriado = new Date(dtStr);
+            if (isNaN(dtCriado.getTime())) return true;
+            return dtCriado <= dataLimite;
+          }).length;
+        } else {
+          ativas = celulasAtivas;
+        }
+
+        const previstos = ativas * 4;
+        const confirmadosTesouraria = doAnoEMes.length;
+
+        let perc = 0;
+        if (previstos > 0 && confirmadosTesouraria > 0) {
+          const proporcao = confirmadosTesouraria / previstos;
+          perc = proporcao >= 1 ? 100 : Math.round(proporcao * 100);
+        }
+
+        return {
+          nome: String(anoItem), // Exibe o ANO embaixo da coluna
+          subRotulo: mesSelecionado,
+          esp,
+          pix,
+          total: esp + pix,
+          confirmados: confirmadosTesouraria,
+          previstos,
+          perc
+        };
+      });
+    }
+
+    // CASO B: ANO ESPECÍFICO OU TODOS OS ANOS + TODOS OS MESES
     return NOMES_MESES_ABREV.map((nomeAbrev, idx) => {
       const mesNum = idx + 1;
       const doMes = lancamentosValidados.filter(l => {
         const itemAno = l.ano !== undefined ? Number(l.ano) : (l.data ? new Date(l.data).getFullYear() : 0);
         const itemMes = l.mes !== undefined ? Number(l.mes) : (l.data ? new Date(l.data).getMonth() + 1 : 0);
-        return itemAno === Number(anoSelecionado) && itemMes === mesNum;
+        const matchAno = isTodosAnos || itemAno === Number(anoSelecionado);
+        return matchAno && itemMes === mesNum;
       });
 
       const esp = doMes.reduce((acc, curr) => acc + Number(curr.OfertaEspecie ?? curr.valorEspecie ?? 0), 0);
@@ -152,10 +324,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         return acc + Number(v);
       }, 0);
       
-      // Quantidade de células ativas no mês específico
       let ativasMes = 0;
+      const anoBase = isTodosAnos ? new Date().getFullYear() : Number(anoSelecionado);
       if (bdCelulas.length > 0) {
-        const dataLimiteMes = new Date(anoSelecionado, mesNum, 0, 23, 59, 59, 999);
+        const dataLimiteMes = new Date(anoBase, mesNum, 0, 23, 59, 59, 999);
         ativasMes = bdCelulas.filter(c => {
           const dtStr = c.Criado || c.Created;
           if (!dtStr) return true;
@@ -167,12 +339,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         ativasMes = celulasAtivas;
       }
 
-      // Base: (Quantidade células ativas no mês * 4)
-      const previstos = ativasMes * 4;
+      const multAnos = isTodosAnos ? Math.max(1, anosDisponiveis.length) : 1;
+      const previstos = ativasMes * 4 * multAnos;
       const confirmadosTesouraria = doMes.length;
 
-      // Cada mês a (Quantidade célula que estava ativa * 4)/Relatórios confirmados pela tesouraria
-      // Caso seja maior ou 1/ fica 100%.
       let perc = 0;
       if (previstos > 0 && confirmadosTesouraria > 0) {
         const proporcao = confirmadosTesouraria / previstos;
@@ -180,7 +350,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
 
       return {
-        nome: nomeAbrev,
+        nome: nomeAbrev, // Exibe o MÊS embaixo da coluna
+        subRotulo: isTodosAnos ? 'Todos os Anos' : String(anoSelecionado),
         esp,
         pix,
         total: esp + pix,
@@ -189,7 +360,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         perc
       };
     });
-  }, [lancamentosValidados, anoSelecionado, bdCelulas, celulasAtivas]);
+  }, [isModoAnosNoGrafico, anosDisponiveis, lancamentosValidados, numMesSelecionado, bdCelulas, celulasAtivas, isTodosAnos, anoSelecionado, mesSelecionado]);
 
   const maxOferta = useMemo(() => {
     const maxVal = Math.max(...mesesGrafico.map(m => Math.max(m.esp, m.pix)), 0);
@@ -240,7 +411,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Ajusta-se dinamicamente conforme o mês e ano selecionados na tela.
   const rankingSetores = useMemo(() => {
     // 1. Células ativas do setor até o mês e ano selecionados
-    const dataLimiteMes = new Date(anoSelecionado, numMesSelecionado, 0, 23, 59, 59, 999);
+    const anoAlvo = isTodosAnos ? new Date().getFullYear() : Number(anoSelecionado);
+    const mesAlvo = isTodosMeses ? 12 : numMesSelecionado;
+    const dataLimiteMes = new Date(anoAlvo, mesAlvo, 0, 23, 59, 59, 999);
     const celulasAtivasPorSetor = new Map<string, number>();
 
     if (bdCelulas.length > 0) {
@@ -266,7 +439,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       lancamentos.forEach(l => {
         const nome = l.Célula || l.celulaNome;
         const setor = (l.Setor || l.setor || 'Sem Setor').trim();
-        if (nome && (!l.ano || l.ano <= anoSelecionado)) {
+        if (nome && (isTodosAnos || !l.ano || l.ano <= anoAlvo)) {
           if (!celulasSet.has(setor)) celulasSet.set(setor, new Set());
           celulasSet.get(setor)!.add(nome);
         }
@@ -284,7 +457,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const itemAno = l.ano !== undefined ? Number(l.ano) : (l.data ? new Date(l.data).getFullYear() : 0);
       const itemMes = l.mes !== undefined ? Number(l.mes) : (l.data ? new Date(l.data).getMonth() + 1 : 0);
 
-      if (itemAno === Number(anoSelecionado) && itemMes === Number(numMesSelecionado)) {
+      const matchAno = isTodosAnos || itemAno === Number(anoSelecionado);
+      const matchMes = isTodosMeses || itemMes === Number(numMesSelecionado);
+
+      if (matchAno && matchMes) {
         const setor = (l.Setor || l.setor || 'Sem Setor').trim();
         entreguesPorSetor.set(setor, (entreguesPorSetor.get(setor) || 0) + 1);
       }
@@ -304,7 +480,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .filter(nome => Boolean(nome) && (nome !== 'Sem Setor' || (celulasAtivasPorSetor.get(nome) || 0) > 0 || (entreguesPorSetor.get(nome) || 0) > 0))
       .map(nome => {
         const ativas = celulasAtivasPorSetor.get(nome) || 0;
-        const previstos = ativas * 4;
+        const previstos = ativas * 4 * fatorMeses;
         const entregues = entreguesPorSetor.get(nome) || 0;
 
         let perc = 0;
@@ -326,7 +502,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
     lista.sort((a, b) => b.perc - a.perc || b.entregues - a.entregues);
     return lista;
-  }, [lancamentos, bdCelulas, anoSelecionado, numMesSelecionado]);
+  }, [lancamentos, bdCelulas, isTodosAnos, anoSelecionado, isTodosMeses, numMesSelecionado, fatorMeses]);
 
   // Bloco Relatório Lançados x Recebidos (com base no filtro de mês e ano selecionado)
   // Relatórios Previstos = Nº de Células Ativas * 4
@@ -412,12 +588,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex items-center gap-1.5 bg-[#22273c] px-2.5 py-1.5 rounded-lg border border-[#343b57]">
             <span className="text-[11px] sm:text-xs text-slate-400">Ano:</span>
             <select
-              value={anoSelecionado}
-              onChange={(e) => onSelectAno(Number(e.target.value))}
+              value={isTodosAnos ? 'todos' : anoSelecionado}
+              onChange={(e) => onSelectAno(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
               className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
             >
-              <option value={2026} className="bg-[#1c2030]">2026</option>
-              <option value={2025} className="bg-[#1c2030]">2025</option>
+              <option value="todos" className="bg-[#1c2030] text-white">
+                TODOS OS ANOS
+              </option>
+              {anosDisponiveis.map(ano => (
+                <option key={ano} value={ano} className="bg-[#1c2030] text-white">
+                  {ano}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -427,8 +609,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onChange={(e) => setMesSelecionado(e.target.value)}
               className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
             >
-              {NOMES_MESES.map(m => (
-                <option key={m} value={m} className="bg-[#1c2030]">{m}</option>
+              {mesesDisponiveis.map(m => (
+                <option key={m} value={m} className="bg-[#1c2030] text-white">
+                  {m}
+                </option>
               ))}
             </select>
           </div>
@@ -447,7 +631,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
         {/* Total Mês PIX */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955]">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Total Mês PIX</p>
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">
+            {isModoAnosNoGrafico ? `Total ${mesSelecionado} (PIX)` : isTodosMeses ? 'Total Período (PIX)' : 'Total Mês PIX'}
+          </p>
           <p className="text-base sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight truncate">
             {formatBRL(totalMesPix)}
           </p>
@@ -455,7 +641,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Total Mês Espécie */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955]">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Total Oferta Espécie</p>
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">
+            {isModoAnosNoGrafico ? `Total ${mesSelecionado} (Espécie)` : isTodosMeses ? 'Total Período (Espécie)' : 'Total Oferta Espécie'}
+          </p>
           <p className="text-base sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight truncate">
             {formatBRL(totalMesEspecie)}
           </p>
@@ -463,7 +651,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Total Validado */}
         <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] col-span-2 lg:col-span-1">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Total Validado</p>
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">
+            {isModoAnosNoGrafico ? `Total Validado (${mesSelecionado})` : isTodosMeses ? 'Total Validado Geral' : 'Total Validado'}
+          </p>
           <p className="text-base sm:text-xl lg:text-2xl font-extrabold text-emerald-400 tracking-tight truncate">
             {formatBRL(totalMesGeral)}
           </p>
@@ -477,11 +667,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
 
-        {/* Relatórios Previstos */}
-        <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] text-center">
-          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate">Relatórios Previstos</p>
-          <p className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            {relatoriosPrevistos}
+        {/* Relatórios Validados / Previstos */}
+        <div className="bg-[#24293f] p-3 sm:p-4 rounded-xl border border-[#323955] text-center flex flex-col justify-center">
+          <p className="text-[11px] sm:text-xs text-slate-400 font-medium mb-1 truncate" title="Relatórios Validados / Previstos">
+            Relatórios Validados / Previstos
+          </p>
+          <p className="text-xl sm:text-2xl lg:text-3xl font-black text-white tracking-tight flex items-center justify-center gap-1.5">
+            <span className="text-emerald-400">{totalValidadosMes}</span>
+            <span className="text-slate-500 font-normal">/</span>
+            <span>{relatoriosPrevistos}</span>
           </p>
         </div>
       </div>
@@ -494,7 +688,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="bg-[#24293f] p-3.5 sm:p-4 rounded-xl border border-[#323955] flex flex-col justify-between">
             <div className="flex items-center justify-between mb-2 sm:mb-3">
               <div>
-                <h3 className="text-sm font-bold text-white">Ofertas por Mês R$</h3>
+                <h3 className="text-sm font-bold text-white">
+                  {isModoAnosNoGrafico
+                    ? `Ofertas de ${mesSelecionado} por Ano R$`
+                    : isTodosAnos && isTodosMeses
+                    ? 'Ofertas por Mês R$ (Consolidado Todos os Anos)'
+                    : 'Ofertas por Mês R$'}
+                </h3>
               </div>
               <div className="flex items-center gap-3 text-xs">
                 <span className="flex items-center gap-1.5 text-slate-300">
@@ -509,8 +709,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             {/* Bar Chart Container */}
-            <div className="overflow-x-auto pb-1 scrollbar-thin">
-              <div className="min-w-[760px] xl:min-w-0 grid grid-cols-12 gap-1.5 sm:gap-2 h-52 sm:h-56 items-end pt-6 pb-2 px-3 sm:px-4 border-b border-[#303752]">
+            <div ref={scrollContainerRef1} className={`overflow-x-auto pb-1 scrollbar-thin ${isModoAnosNoGrafico ? 'w-full' : ''}`}>
+              <div className={`h-52 sm:h-56 items-end pt-6 pb-2 px-3 sm:px-4 border-b border-[#303752] ${
+                isModoAnosNoGrafico
+                  ? 'w-full flex justify-around gap-2 sm:gap-6 min-w-[320px]'
+                  : 'min-w-[760px] xl:min-w-0 grid grid-cols-12 gap-1.5 sm:gap-2'
+              }`}>
                 {mesesGrafico.map((m) => {
                   const altPix = maxOferta > 0 ? (m.pix / maxOferta) * 100 : 0;
                   const altEsp = maxOferta > 0 ? (m.esp / maxOferta) * 100 : 0;
@@ -521,6 +725,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   return (
                     <div
                       key={m.nome}
+                      data-mes={m.nome}
                       className="flex flex-col items-center h-full justify-end group relative"
                       title={`${m.nome} - Total: ${formatBRL(m.total)} (PIX: ${formatBRL(m.pix)} | Espécie: ${formatBRL(m.esp)})`}
                     >
@@ -579,19 +784,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="bg-[#24293f] p-4 sm:p-5 rounded-xl border border-[#323955] flex flex-col justify-between">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h3 className="text-sm font-bold text-white">Relatórios Recebidos Mês a Mês (%)</h3>
-                <p className="text-[10px] text-slate-400">Eficiência de validação pela Tesouraria</p>
+                <h3 className="text-sm font-bold text-white">
+                  {isModoAnosNoGrafico
+                    ? `Relatórios Recebidos de ${mesSelecionado} por Ano (%)`
+                    : 'Relatórios Recebidos Mês a Mês (%)'}
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  {isModoAnosNoGrafico
+                    ? `% de relatórios validados pela Tesouraria no mês de ${mesSelecionado} em relação à meta prevista`
+                    : '% de relatórios validados pela Tesouraria em relação à meta prevista'}
+                </p>
               </div>
             </div>
 
-            <div className="overflow-x-auto pb-1 scrollbar-thin">
-              <div className="min-w-[760px] xl:min-w-0 grid grid-cols-12 gap-1.5 sm:gap-2 h-56 sm:h-60 items-end pt-4 pb-2 px-3 sm:px-4 border-b border-[#303752]">
+            <div ref={scrollContainerRef2} className={`overflow-x-auto pb-1 scrollbar-thin ${isModoAnosNoGrafico ? 'w-full' : ''}`}>
+              <div className={`h-56 sm:h-60 items-end pt-4 pb-2 px-3 sm:px-4 border-b border-[#303752] ${
+                isModoAnosNoGrafico
+                  ? 'w-full flex justify-around gap-2 sm:gap-6 min-w-[320px]'
+                  : 'min-w-[760px] xl:min-w-0 grid grid-cols-12 gap-1.5 sm:gap-2'
+              }`}>
                 {mesesGrafico.map((m) => {
                   const isRed = m.perc < 80 && m.perc > 0;
                   const barColor = isRed ? 'bg-[#c85a5a]' : 'bg-[#22c55e]';
 
                   return (
-                    <div key={m.nome} className="flex flex-col items-center h-full justify-end" title={`${m.nome}: ${m.confirmados} validados / ${m.previstos} previstos (${m.perc}%)`}>
+                    <div 
+                      key={m.nome} 
+                      data-mes={m.nome}
+                      className="flex flex-col items-center h-full justify-end" 
+                      title={`${m.nome}: ${m.confirmados} validados / ${m.previstos} previstos (${m.perc}%)`}
+                    >
                       <div className="h-5 flex items-center justify-center mb-1">
                         {m.perc > 0 && (
                           <span className="text-[9px] text-slate-300 font-bold">
@@ -619,18 +841,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         {/* Coluna Direita (reduzida em ~40%): Relatórios Lançados x Recebidos e abaixo Ranking por Setores em coluna única */}
         <div className="lg:col-span-4 flex flex-col gap-4 sm:gap-5">
           {/* Relatório Lançados x Recebidos */}
-          <div className="bg-[#24293f] p-4 sm:p-5 rounded-xl border border-[#323955] flex flex-col justify-center space-y-6">
+          <div className="bg-[#24293f] p-4 sm:p-5 rounded-xl border border-[#323955] flex flex-col justify-center space-y-5">
             <div>
-              <h3 className="text-sm font-bold text-white">Relatório Lançados x Recebidos</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5">({mesSelecionado}/{anoSelecionado})</p>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white">Relatório Lançados x Recebidos</h3>
+                <span className="text-[10px] text-slate-400 font-medium">
+                  ({isTodosMeses ? 'Todos os Meses' : mesSelecionado}/{isTodosAnos ? 'Todos os Anos' : anoSelecionado})
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1 leading-snug">
+                Percentual de envelopes em relação à meta prevista por célula
+              </p>
             </div>
 
             {/* Relat. Lançados */}
             <div>
-              <div className="flex justify-between text-xs font-semibold text-slate-300 mb-1.5">
+              <div className="flex justify-between items-baseline text-xs font-semibold text-slate-300 mb-1">
                 <span>Relat. Lançados</span>
                 <span className={`font-bold ${corPrevistosMes.text}`}>{percPrevistosMes}%</span>
               </div>
+              <p className="text-[10px] text-slate-400 mb-1.5">
+                Lançados pelas células ({totalLancadosMes} de {relatoriosPrevistosMes} previstos)
+              </p>
               <div className="w-full bg-[#181b2a] rounded-sm h-5 overflow-hidden p-0.5 border border-[#303752]">
                 <div 
                   className={`${corPrevistosMes.bar} h-full rounded-xs transition-all duration-500`} 
@@ -641,10 +873,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Relatórios Validados */}
             <div>
-              <div className="flex justify-between text-xs font-semibold text-slate-300 mb-1.5">
+              <div className="flex justify-between items-baseline text-xs font-semibold text-slate-300 mb-1">
                 <span>Relatórios Validados</span>
                 <span className={`font-bold ${corValidadosMes.text}`}>{percValidadosMes}%</span>
               </div>
+              <p className="text-[10px] text-slate-400 mb-1.5">
+                Confirmados pela Tesouraria ({totalValidadosMes} de {relatoriosPrevistosMes} previstos)
+              </p>
               <div className="w-full bg-[#181b2a] rounded-sm h-5 overflow-hidden p-0.5 border border-[#303752]">
                 <div 
                   className={`${corValidadosMes.bar} h-full rounded-xs transition-all duration-500`} 

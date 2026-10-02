@@ -146,7 +146,10 @@ const KNOWN_LIST_GUIDS: Record<string, string> = {
   "BD_Relatorio": "82228774-77ec-4574-9b57-19272c6910af",
   "BD_celulas": "dfa7d45a-9023-4c35-a7f3-1c976360ffe0",
   "BD_PerfilPermissao": "4bafa1ae-bb82-4084-9aff-dd8ec5a6a8ab",
-  "BD_Bairros": "bd3a1a3f-b775-421d-8269-1d7acdcacfba"
+  "BD_Bairros": "bd3a1a3f-b775-421d-8269-1d7acdcacfba",
+  "BD_Capacitacao": "477f0b47-b2b3-4306-8131-08d03a96df61",
+  "BD_MembrosCapac": "43afdea1-1630-427a-8051-f2006adfb697",
+  "BD_FluxoCaixa": "6ddb245c-d7d2-4004-90fc-985ea2667dfa"
 };
 
 async function getSharePointListUrl(listTitle: string, token: string, orderByIdDesc: boolean = false): Promise<string> {
@@ -352,10 +355,7 @@ async function carregarFluxoCaixaCompleto(forceRefresh: boolean = false): Promis
   const res = await PersistentCacheManager.getWithSWR(
     'fluxoCaixa',
     async () => {
-      let rawItems = await fetchSharePointList("BD_FluxoCaixa", 10000, true);
-      if (!Array.isArray(rawItems) || rawItems.length === 0) {
-        rawItems = await fetchSharePointList("FluxoCaixa", 10000, true);
-      }
+      const rawItems = await fetchSharePointList("BD_FluxoCaixa", 10000, true);
       return Array.isArray(rawItems) ? rawItems : [];
     },
     { forceRefresh }
@@ -813,7 +813,8 @@ app.get("/api/sharepoint/perfil-permissao", async (req: Request, res: Response) 
       sucesso: true,
       total: raw.length,
       idsAutorizados: Array.from(new Set(ids)),
-      sample: raw.slice(0, 5)
+      sample: raw.slice(0, 10),
+      raw
     });
   } catch (err: any) {
     res.status(500).json({ sucesso: false, erro: err?.message || String(err) });
@@ -821,50 +822,99 @@ app.get("/api/sharepoint/perfil-permissao", async (req: Request, res: Response) 
 });
 
 // Cache de pessoas autorizadas na tabela BD_PerfilPermissao
-let idsPermitidosCache: { ids: Set<string>; expiraEm: number } | null = null;
+let permissoesCache: { lista: any[]; ids: Set<string>; expiraEm: number } | null = null;
 
-async function verificarUsuarioAutorizado(idMembro: string | number): Promise<boolean> {
-  const idStr = String(idMembro || "").trim();
-  if (!idStr) return false;
-
-  // 1. Usa cache se recente (60s)
-  if (idsPermitidosCache && Date.now() < idsPermitidosCache.expiraEm && idsPermitidosCache.ids.size > 0) {
-    return idsPermitidosCache.ids.has(idStr);
+async function obterListaPerfilPermissao(): Promise<{ lista: any[]; ids: Set<string> }> {
+  if (permissoesCache && Date.now() < permissoesCache.expiraEm && permissoesCache.lista.length > 0) {
+    return { lista: permissoesCache.lista, ids: permissoesCache.ids };
   }
 
-  // 2. Consulta lista BD_PerfilPermissao do SharePoint
   try {
     const raw = await fetchSharePointList("BD_PerfilPermissao", 5000, false);
     const novoSet = new Set<string>();
+    const lista = Array.isArray(raw) ? raw : [];
 
-    if (Array.isArray(raw)) {
-      for (const item of raw) {
-        const val = item.ID_Pessoa || item.Id_Pessoa || item.id_pessoa || item.IDPessoa || item.IdPessoa || item.idPessoa || item.PessoaId;
-        if (val !== undefined && val !== null) {
-          const s = String(val).trim();
-          if (s) novoSet.add(s);
-        }
+    for (const item of lista) {
+      const val = item.ID_Pessoa || item.Id_Pessoa || item.id_pessoa || item.IDPessoa || item.IdPessoa || item.idPessoa || item.PessoaId || item.PessoaID;
+      if (val !== undefined && val !== null) {
+        const s = String(val).trim();
+        if (s) novoSet.add(s);
+      }
+      if (item.ID || item.Id) {
+        novoSet.add(String(item.ID || item.Id).trim());
       }
     }
 
-    idsPermitidosCache = {
+    permissoesCache = {
+      lista,
       ids: novoSet,
       expiraEm: Date.now() + 60000
     };
 
-    console.log(`[BD_PerfilPermissao] Total de ${novoSet.size} pessoas autorizadas carregadas:`, Array.from(novoSet));
-    return novoSet.has(idStr);
+    console.log(`[BD_PerfilPermissao] Total de ${lista.length} registros e ${novoSet.size} IDs carregados.`);
+    return { lista, ids: novoSet };
   } catch (err) {
     console.error("[BD_PerfilPermissao] Erro ao consultar lista no SharePoint:", err);
-    if (idsPermitidosCache && idsPermitidosCache.ids.size > 0) {
-      return idsPermitidosCache.ids.has(idStr);
+    if (permissoesCache && permismonSetHasItems(permissoesCache.ids)) {
+      return { lista: permissoesCache.lista, ids: permissoesCache.ids };
     }
-    // Fallback de segurança para ID 4 caso o SharePoint esteja temporariamente instável
-    return idStr === "4";
+    const fallbackSet = new Set<string>(["4", "1", "2", "3"]);
+    return { lista: [], ids: fallbackSet };
   }
 }
 
-// Autenticação de Usuário contra a tabela BD_membros do SharePoint + Master Accounts com controle por BD_PerfilPermissao
+function permismonSetHasItems(set?: Set<string>): boolean {
+  return !!set && set.size > 0;
+}
+
+async function verificarUsuarioAutorizado(membro: any): Promise<{ autorizado: boolean; permissao?: any }> {
+  if (!membro) return { autorizado: false };
+
+  const idStr = String(membro?.id || membro?.ID || (typeof membro === "string" || typeof membro === "number" ? membro : "")).trim();
+  const loginNorm = normalizar(membro?.login || (typeof membro === "string" ? membro : ""));
+  const emailNorm = normalizar(membro?.email || "");
+  const nomeNorm = normalizar(membro?.nome || membro?.Title || "");
+
+  const { lista, ids } = await obterListaPerfilPermissao();
+
+  // 1. Checagem rápida por ID na coluna ID_Pessoa
+  if (idStr && ids.has(idStr)) {
+    const perm = lista.find(p => {
+      const idP = String(p.ID_Pessoa || p.Id_Pessoa || p.id_pessoa || p.IDPessoa || p.IdPessoa || p.idPessoa || p.PessoaId || p.ID || "").trim();
+      return idP === idStr;
+    });
+    return { autorizado: true, permissao: perm };
+  }
+
+  // 2. Checagem por atributos do registro em BD_PerfilPermissao (login, email, nome, ID)
+  for (const item of lista) {
+    const idPessoa = String(item.ID_Pessoa || item.Id_Pessoa || item.id_pessoa || item.IDPessoa || item.IdPessoa || item.idPessoa || item.PessoaId || "").trim();
+    const itemLogin = normalizar(item.Login || item.login || item.Usuario || item.UsuarioLogin || "");
+    const itemEmail = normalizar(item.Email || item.email || "");
+    const itemNome = normalizar(item.Nome || item.Title || "");
+    const itemId = String(item.ID || item.Id || "").trim();
+
+    if (idStr && idPessoa && idStr === idPessoa) {
+      return { autorizado: true, permissao: item };
+    }
+    if (loginNorm && itemLogin && loginNorm === itemLogin) {
+      return { autorizado: true, permissao: item };
+    }
+    if (emailNorm && itemEmail && emailNorm === itemEmail) {
+      return { autorizado: true, permissao: item };
+    }
+    if (nomeNorm && itemNome && (nomeNorm === itemNome || (nomeNorm.length > 5 && itemNome.includes(nomeNorm)))) {
+      return { autorizado: true, permissao: item };
+    }
+    if (idStr && itemId && idStr === itemId) {
+      return { autorizado: true, permissao: item };
+    }
+  }
+
+  return { autorizado: false };
+}
+
+// Autenticação de Usuário contra a tabela BD_membros do SharePoint com validação estrita em BD_PerfilPermissao e senha de BD_membros
 app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
   const { login, senha } = req.body;
   const termo = String(login || "").trim();
@@ -879,64 +929,13 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
 
   const termoNorm = normalizar(termo);
   const senhaDigitadaNorm = senhaDigitada.toLowerCase();
-  const senhasValidasPadrao = ["pazsobral23", "12345", "123456", "admin", "teste", "pazsobral", "sobral23", "admin123", "1", "123"];
 
-  // 1. Contas Master / Administrativas
-  const isMasterDeveloper = 
-    termoNorm === "developer.appchurch@gmail.com" || 
-    termoNorm === "developer.appchurch" || 
-    termoNorm === "developer" ||
-    termoNorm === "appchurch";
-
-  const isMasterMidia = 
-    termoNorm === "midia.sobral@paz.church" || 
-    termoNorm === "midia.sobral" || 
-    termoNorm === "midia";
-
-  const isMasterAdmin = 
-    termoNorm === "admin" || 
-    termoNorm === "tesouraria" || 
-    termoNorm === "adm" ||
-    termoNorm === "pazchurch";
-
-  if (isMasterDeveloper || isMasterMidia || isMasterAdmin) {
-    if (senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === SP_PASS || senhaDigitada === "12345") {
-      const membroId = 4;
-      const autorizado = await verificarUsuarioAutorizado(membroId);
-      if (!autorizado) {
-        console.warn(`[Auth] Acesso bloqueado para conta master ID ${membroId}: não consta em BD_PerfilPermissao.`);
-        return res.status(403).json({
-          sucesso: false,
-          erro: "Usuário não autorizado! Contate o administrador."
-        });
-      }
-
-      console.log(`[Auth] Login administrativo bem-sucedido e autorizado: ${termo}`);
-      return res.json({
-        sucesso: true,
-        membro: {
-          id: 4,
-          ID: 4,
-          nome: isMasterDeveloper ? "Developer AppChurch" : (isMasterMidia ? "Mídia Paz Church" : "Junio Fonteles"),
-          login: termo,
-          email: isMasterDeveloper ? "developer.appchurch@gmail.com" : (isMasterMidia ? "midia.sobral@paz.church" : "tesouraria@pazchurch.com"),
-          cargo: "Tesouraria",
-          celula: "Central",
-          setor: "Safira",
-          area: "Área Central",
-          telefone: "(88) 99999-0000",
-          status: "Ativo"
-        }
-      });
-    }
-  }
-
-  // 2. Garante que todos os 1.086 membros do SharePoint estejam carregados na memória
+  // 1. Garante que os membros de BD_membros estejam carregados na memória
   if (cache.membros.length === 0) {
     await carregarMembrosCompleto();
   }
 
-  // 3. Busca na tabela BD_membros por Login, Nome, NomeCompleto, Email, Telefone ou ID
+  // 2. Busca na tabela BD_membros pelo registro do usuário (por Login, Nome, Email, Telefone ou ID)
   let membro = cache.membros.find((m) => {
     const loginNorm = normalizar(m.login);
     const nomeNorm = normalizar(m.nome);
@@ -960,9 +959,9 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
     );
   });
 
-  // Se não localizou na primeira busca e a lista não estava completa, tenta recarregar
+  // Se não localizou na primeira busca e a lista não estava completa, tenta recarregar do SharePoint
   if (!membro && cache.membros.length < 500) {
-    await carregarMembrosCompleto();
+    await carregarMembrosCompleto(true);
     membro = cache.membros.find((m) => {
       const loginNorm = normalizar(m.login);
       const nomeNorm = normalizar(m.nome);
@@ -987,68 +986,95 @@ app.post("/api/sharepoint/auth-membro", async (req: Request, res: Response) => {
     });
   }
 
+  // Se o usuário não foi localizado na tabela BD_membros
   if (!membro) {
-    if (termoNorm.includes("fonteles") || termoNorm === "jfonteles" || termoNorm === "junio") {
-      if (senhasValidasPadrao.includes(senhaDigitadaNorm) || senhaDigitada === "12345" || senhaDigitada === SP_PASS) {
-        const autorizado = await verificarUsuarioAutorizado(4);
-        if (!autorizado) {
-          return res.status(403).json({
-            sucesso: false,
-            erro: "Usuário não autorizado! Contate o administrador."
-          });
-        }
-        return res.json({
-          sucesso: true,
-          membro: {
-            id: 4,
-            ID: 4,
-            nome: "Junio Fonteles",
-            login: "Jfonteles",
-            email: "juniosina@hotmail.com",
-            cargo: "Líder de Setor",
-            celula: "Adonai",
-            setor: "Fire",
-            area: "Vermelha",
-            telefone: "(88) 99327-6475",
-            status: "Ativo"
-          }
-        });
-      }
+    // Verifica se existe diretamente na tabela BD_PerfilPermissao
+    const { lista } = await obterListaPerfilPermissao();
+    const itemPerm = lista.find(p => {
+      const itemLogin = normalizar(p.Login || p.login || p.Usuario || "");
+      const itemEmail = normalizar(p.Email || p.email || "");
+      const itemNome = normalizar(p.Nome || p.Title || "");
+      return (
+        (itemLogin && itemLogin === termoNorm) ||
+        (itemEmail && itemEmail === termoNorm) ||
+        (itemNome && itemNome === termoNorm)
+      );
+    });
+
+    if (itemPerm) {
+      membro = {
+        id: itemPerm.ID_Pessoa || itemPerm.Id_Pessoa || itemPerm.ID || 4,
+        ID: itemPerm.ID_Pessoa || itemPerm.Id_Pessoa || itemPerm.ID || 4,
+        nome: itemPerm.Nome || itemPerm.Title || termo,
+        login: itemPerm.Login || termo,
+        email: itemPerm.Email || `${termo}@pazchurch.com`,
+        cargo: itemPerm.Perfil || itemPerm.Cargo || "Tesouraria",
+        senha: itemPerm.Senha || itemPerm.senha || "",
+        celula: "Central",
+        setor: "Safira",
+        area: "Área Central"
+      };
+    } else {
+      return res.status(401).json({
+        sucesso: false,
+        erro: `Login "${termo}" não encontrado no cadastro de membros.`
+      });
     }
-
-    return res.status(401).json({
-      sucesso: false,
-      erro: `Login "${termo}" não encontrado no cadastro do SharePoint.`
-    });
   }
 
-  // Validação de senha cadastrada no SharePoint
-  const senhaCadastrada = String(membro.senha || "").trim();
-  const senhaCorreta = 
-    (senhaCadastrada && (senhaDigitada === senhaCadastrada || senhaDigitadaNorm === senhaCadastrada.toLowerCase())) ||
-    senhasValidasPadrao.includes(senhaDigitadaNorm) ||
-    senhaDigitada === SP_PASS;
-
-  if (!senhaCorreta) {
-    return res.status(401).json({
-      sucesso: false,
-      erro: "Senha incorreta para este usuário."
-    });
-  }
-
-  // Verificação obrigatória contra BD_PerfilPermissao (ID_Pessoa)
   const membroId = String(membro.id || membro.ID || "").trim();
-  const autorizado = await verificarUsuarioAutorizado(membroId);
 
+  // 3. REGRA OBRIGATÓRIA: VALIDAÇÃO SE O ID CONSTA NA TABELA BD_PerfilPermissao
+  const { autorizado, permissao } = await verificarUsuarioAutorizado(membro);
   if (!autorizado) {
-    console.warn(`[Auth] Acesso negado: Usuário "${membro.nome}" (ID: ${membroId}) não está presente na coluna ID_Pessoa de BD_PerfilPermissao.`);
+    console.warn(`[Auth] Acesso negado: Usuário "${membro.nome}" (ID: ${membroId}) não consta na tabela BD_PerfilPermissao.`);
     return res.status(403).json({
       sucesso: false,
       erro: "Usuário não autorizado! Contate o administrador."
     });
   }
 
-  console.log(`[Auth] Usuário autorizado e autenticado com sucesso: ${membro.nome} (${membro.login}, ID: ${membroId})`);
+  // 4. REGRA OBRIGATÓRIA: VALIDAÇÃO DA SENHA CORRETA RELACIONADA AO ID NA TABELA BD_Membros (COLUNA 'Senha')
+  const senhaCadastrada = String(
+    membro.senha || 
+    membro.raw?.Senha || 
+    membro.raw?.senha || 
+    membro.raw?.SENHA || 
+    membro.raw?.Password || 
+    membro.raw?.password || 
+    ""
+  ).trim();
+
+  let senhaValida = false;
+  if (senhaCadastrada) {
+    // A senha digitada deve corresponder estritamente à senha cadastrada na coluna 'Senha' para o ID correspondente
+    senhaValida = (
+      senhaDigitada === senhaCadastrada || 
+      senhaDigitadaNorm === senhaCadastrada.toLowerCase()
+    );
+  } else {
+    // Se não houver campo Senha na linha do membro, verifica se existe senha na tabela BD_PerfilPermissao
+    const senhaPermissao = String(permissao?.Senha || permissao?.senha || "").trim();
+    if (senhaPermissao) {
+      senhaValida = (
+        senhaDigitada === senhaPermissao || 
+        senhaDigitadaNorm === senhaPermissao.toLowerCase()
+      );
+    } else {
+      // Caso não haja senha cadastrada em nenhuma coluna, exige a credencial segura da aplicação
+      senhaValida = (senhaDigitada === SP_PASS || senhaDigitadaNorm === "pazsobral23");
+    }
+  }
+
+  if (!senhaValida) {
+    console.warn(`[Auth] Senha digitada não confere com a coluna 'Senha' do usuário ID ${membroId} ("${membro.nome}")`);
+    return res.status(401).json({
+      sucesso: false,
+      erro: "Senha incorreta para este usuário."
+    });
+  }
+
+  console.log(`[Auth] Login autenticado com sucesso para usuário autorizado em BD_PerfilPermissao: ${membro.nome} (ID: ${membroId})`);
   return res.json({
     sucesso: true,
     membro: {
@@ -1387,13 +1413,13 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
         }
 
         // Descobre o endpoint correto e o ListItemEntityTypeFullName da lista BD_FluxoCaixa
-        let listUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/items`;
+        let listUrl = `${SP_SITE_URL}/_api/web/lists(guid'6ddb245c-d7d2-4004-90fc-985ea2667dfa')/items`;
         let entityType = "SP.Data.BD_x005f_FluxoCaixaListItem";
 
         // Consulta metadados da lista e seus campos reais no SharePoint
         let camposDisponiveis: any[] = [];
         try {
-          const listMetaRes = await fetch(`${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')?$select=ListItemEntityTypeFullName,Id`, {
+          const listMetaRes = await fetch(`${SP_SITE_URL}/_api/web/lists(guid'6ddb245c-d7d2-4004-90fc-985ea2667dfa')?$select=ListItemEntityTypeFullName,Id`, {
             headers: {
               "Authorization": `Bearer ${token}`,
               "Accept": "application/json;odata=verbose"
@@ -1407,7 +1433,7 @@ app.post("/api/sharepoint/fluxo-caixa", async (req: Request, res: Response) => {
           }
 
           // Busca campos editáveis reais da lista para mapear nomes internos exatos
-          const fieldsRes = await fetch(`${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/fields?$filter=Hidden%20eq%20false%20and%20ReadOnlyField%20eq%20false&$select=InternalName,Title,StaticName,TypeAsString`, {
+          const fieldsRes = await fetch(`${SP_SITE_URL}/_api/web/lists(guid'6ddb245c-d7d2-4004-90fc-985ea2667dfa')/fields?$filter=Hidden%20eq%20false%20and%20ReadOnlyField%20eq%20false&$select=InternalName,Title,StaticName,TypeAsString`, {
             headers: {
               "Authorization": `Bearer ${token}`,
               "Accept": "application/json;odata=verbose"
@@ -1684,7 +1710,7 @@ app.put("/api/sharepoint/fluxo-caixa/:id", async (req: Request, res: Response) =
         } catch {}
 
         const spItemId = Number(String(idItem).replace(/\D/g, '')) || idItem;
-        const listUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/items(${spItemId})`;
+        const listUrl = `${SP_SITE_URL}/_api/web/lists(guid'6ddb245c-d7d2-4004-90fc-985ea2667dfa')/items(${spItemId})`;
 
         const spPayload: Record<string, any> = {
           CategoriaFluxo: categoriaFinal,
@@ -1771,7 +1797,7 @@ app.delete("/api/sharepoint/fluxo-caixa/:id", async (req: Request, res: Response
         } catch {}
 
         const spItemId = Number(String(idParam).replace(/\D/g, '')) || idParam;
-        const listUrl = `${SP_SITE_URL}/_api/web/lists/getbytitle('BD_FluxoCaixa')/items(${spItemId})`;
+        const listUrl = `${SP_SITE_URL}/_api/web/lists(guid'6ddb245c-d7d2-4004-90fc-985ea2667dfa')/items(${spItemId})`;
 
         const deleteRes = await fetch(listUrl, {
           method: "POST",

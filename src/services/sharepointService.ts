@@ -473,25 +473,6 @@ export class SharePointService {
 
     const termoNorm = normalizar(termoLimpo);
     const senhaNorm = senhaLimpa.toLowerCase();
-    const senhasPadrao = ['12345', '123456', 'pazsobral23', 'teste', 'admin', 'pazsobral'];
-
-    // Contas administrativas / master no fallback local
-    if (termoNorm === 'admin' || termoNorm === 'developer' || termoNorm === 'developer.appchurch@gmail.com' || termoNorm === 'midia.sobral@paz.church') {
-      if (senhasPadrao.includes(senhaNorm) || senhaLimpa === 'Pazsobral23') {
-        const membroMaster: MembroItem = {
-          id: 4,
-          ID: 4,
-          nome: termoNorm.includes('developer') ? 'Developer AppChurch' : (termoNorm.includes('midia') ? 'Mídia Paz Church' : 'Junio Fonteles'),
-          login: termoLimpo,
-          email: termoNorm.includes('@') ? termoLimpo : 'tesouraria@pazchurch.com',
-          cargo: 'Tesoureiro',
-          celula: 'Central',
-          setor: 'Safira'
-        };
-        console.log('[SharePointService] Fallback Master autenticado:', membroMaster.nome);
-        return { sucesso: true, membro: membroMaster };
-      }
-    }
 
     const membroEncontrado = this.membros.find(m => {
       const loginNorm = normalizar(m.login);
@@ -519,28 +500,13 @@ export class SharePointService {
       };
     }
 
-    // Validação de senha
-    const senhaCadastrada = String(membroEncontrado.senha || '').trim();
-    const senhaCorreta = 
-      (senhaCadastrada && (senhaLimpa === senhaCadastrada || senhaNorm === senhaCadastrada.toLowerCase())) ||
-      senhasPadrao.includes(senhaNorm) ||
-      senhaLimpa === 'Pazsobral23';
-
-    if (!senhaCorreta) {
-      console.warn('[SharePointService] Senha incorreta no fallback local.');
-      return {
-        sucesso: false,
-        erro: 'Senha incorreta para este usuário.'
-      };
-    }
-
-    // Verificação de autorização em BD_PerfilPermissao (coluna ID_Pessoa)
+    // 1. Verificação de autorização em BD_PerfilPermissao (coluna ID_Pessoa)
+    const membroIdStr = String(membroEncontrado.id || membroEncontrado.ID || '').trim();
     try {
       const respPerm = await fetch('/api/sharepoint/perfil-permissao');
       if (respPerm.ok) {
         const jsonPerm = await respPerm.json();
         if (jsonPerm && Array.isArray(jsonPerm.idsAutorizados) && jsonPerm.idsAutorizados.length > 0) {
-          const membroIdStr = String(membroEncontrado.id || membroEncontrado.ID || '').trim();
           if (!jsonPerm.idsAutorizados.includes(membroIdStr)) {
             console.warn(`[SharePointService] Usuário ID ${membroIdStr} (${membroEncontrado.nome}) não autorizado em BD_PerfilPermissao.`);
             return {
@@ -551,6 +517,20 @@ export class SharePointService {
         }
       }
     } catch {}
+
+    // 2. Validação estrita da senha correspondente ao ID na tabela BD_Membros (coluna 'Senha')
+    const senhaCadastrada = String(membroEncontrado.senha || '').trim();
+    const senhaCorreta = senhaCadastrada
+      ? (senhaLimpa === senhaCadastrada || senhaNorm === senhaCadastrada.toLowerCase())
+      : (senhaLimpa === 'Pazsobral23' || senhaNorm === 'pazsobral23');
+
+    if (!senhaCorreta) {
+      console.warn(`[SharePointService] Senha incorreta para o usuário ID ${membroIdStr}.`);
+      return {
+        sucesso: false,
+        erro: 'Senha incorreta para este usuário.'
+      };
+    }
 
     // Salva o usuário logado na configuração do sistema
     const now = new Date();

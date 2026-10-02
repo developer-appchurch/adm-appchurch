@@ -1,11 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { RotateCw, Database, FileSpreadsheet, FileText, UserCheck, Menu } from 'lucide-react';
-import { ViewMode } from '../types';
+import { ViewMode, LancamentoTesouraria } from '../types';
 
 interface HeaderProps {
   currentView: ViewMode;
-  anoSelecionado: number;
-  onSelectAno: (ano: number) => void;
+  anoSelecionado: number | string;
+  onSelectAno: (ano: number | string) => void;
+  lancamentos?: LancamentoTesouraria[];
   onRefresh: () => void;
   isRefreshing: boolean;
   onExportExcel?: () => void;
@@ -41,6 +42,7 @@ export const Header: React.FC<HeaderProps> = ({
   currentView,
   anoSelecionado,
   onSelectAno,
+  lancamentos = [],
   onRefresh,
   isRefreshing,
   onExportExcel,
@@ -54,6 +56,26 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectSetor,
   setoresDisponiveis
 }) => {
+  const anosDisponiveis = useMemo(() => {
+    const anosSet = new Set<number>();
+    const anoAtualReal = new Date().getFullYear();
+    anosSet.add(anoAtualReal);
+
+    lancamentos.forEach(l => {
+      if (l.ano && typeof l.ano === 'number' && l.ano > 2000) {
+        anosSet.add(l.ano);
+      } else if (l.dataBR && l.dataBR.includes('/')) {
+        const parts = l.dataBR.split('/');
+        const a = parseInt(parts[2], 10);
+        if (a && a > 2000) anosSet.add(a);
+      } else if (l.data && l.data.includes('-')) {
+        const a = parseInt(l.data.split('-')[0], 10);
+        if (a && a > 2000) anosSet.add(a);
+      }
+    });
+
+    return Array.from(anosSet).sort((a, b) => b - a);
+  }, [lancamentos]);
   const getTitle = () => {
     switch (currentView) {
       case 'dashboard':
@@ -138,13 +160,15 @@ export const Header: React.FC<HeaderProps> = ({
               <select
                 id="select-ano-header"
                 value={anoSelecionado}
-                onChange={(e) => onSelectAno(Number(e.target.value))}
+                onChange={(e) => onSelectAno(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
                 className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
               >
-                <option value={2026} className="bg-[#1c2030] text-white">2026</option>
-                <option value={2025} className="bg-[#1c2030] text-white">2025</option>
-                <option value={2024} className="bg-[#1c2030] text-white">2024</option>
-                <option value={2023} className="bg-[#1c2030] text-white">2023</option>
+                <option value="todos" className="bg-[#1c2030] text-white">Todos os Anos</option>
+                {anosDisponiveis.map(ano => (
+                  <option key={ano} value={ano} className="bg-[#1c2030] text-white">
+                    {ano}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -160,7 +184,15 @@ export const Header: React.FC<HeaderProps> = ({
                   onChange={(e) => onSelectMes(e.target.value)}
                   className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
                 >
-                  {MESES_HEADER.map(m => (
+                  {MESES_HEADER.filter(m => {
+                    if (m.valor === 'todos') return true;
+                    const mesNum = parseInt(m.valor, 10);
+                    const hoje = new Date();
+                    if (Number(anoSelecionado) === hoje.getFullYear()) {
+                      return mesNum <= (hoje.getMonth() + 1);
+                    }
+                    return true;
+                  }).map(m => (
                     <option key={m.valor} value={m.valor} className="bg-[#1c2030] text-white">
                       {m.label}
                     </option>
@@ -181,9 +213,12 @@ export const Header: React.FC<HeaderProps> = ({
                   onChange={(e) => onSelectSetor(e.target.value)}
                   className="bg-white text-xs font-bold text-slate-900 px-1.5 py-0.5 rounded focus:outline-none cursor-pointer shadow-xs"
                 >
-                  {(setoresDisponiveis || ['Safira', 'Fire', 'White', 'Azul', 'Amarelo', 'Black', 'Diamante', 'Legacy', 'Onix', 'Titanium']).map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
+                  <option value="todos">Todos os Setores</option>
+                  {(setoresDisponiveis || ['Safira', 'Fire', 'White', 'Azul', 'Amarelo', 'Black', 'Diamante', 'Legacy', 'Onix', 'Titanium'])
+                    .filter(s => s.toLowerCase() !== 'todos' && s.toLowerCase() !== 'todos os setores')
+                    .map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
                 </select>
               </div>
             )}

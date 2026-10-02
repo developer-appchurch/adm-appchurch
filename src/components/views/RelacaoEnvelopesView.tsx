@@ -5,8 +5,8 @@ import { SharePointService } from '../../services/sharepointService';
 
 interface RelacaoEnvelopesViewProps {
   lancamentos: LancamentoTesouraria[];
-  anoSelecionado: number;
-  onSelectAno: (ano: number) => void;
+  anoSelecionado: number | string;
+  onSelectAno: (ano: number | string) => void;
   mesSelecionado?: string;
   onSelectMes?: (mes: string) => void;
   setorSelecionado?: string;
@@ -162,24 +162,29 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
 
   // Ajusta o setor selecionado para um válido caso o atual não exista na lista
   useEffect(() => {
+    const isTodos = !setorSelecionado || setorSelecionado.toLowerCase() === 'todos' || setorSelecionado.toLowerCase() === 'todos os setores';
+    if (isTodos) return;
     if (setoresDisponiveis.length > 0 && !setoresDisponiveis.includes(setorSelecionado)) {
       setSetorSelecionado(setoresDisponiveis[0]);
     }
   }, [setoresDisponiveis, setorSelecionado, setSetorSelecionado]);
 
-  // Células pertencentes ao setor selecionado extraídas da tabela/lista BD_celulas
+  const isTodosSetores = !setorSelecionado || setorSelecionado.toLowerCase() === 'todos' || setorSelecionado.toLowerCase() === 'todos os setores';
+
+  // Células pertencentes ao setor selecionado (ou a todos os setores) extraídas da tabela/lista BD_celulas
   // Coluna de líder resolvida via ID_Lider / LiderCelula contra BD_Membros
   const celulasDoSetor = useMemo(() => {
-    if (!setorSelecionado) return [];
-
-    const filtradas = celulasBD.filter(c => {
-      const s = String(c.Setor || c.setor || '').trim().toLowerCase();
-      return s === setorSelecionado.trim().toLowerCase();
-    });
+    const filtradas = isTodosSetores
+      ? celulasBD
+      : celulasBD.filter(c => {
+          const s = String(c.Setor || c.setor || '').trim().toLowerCase();
+          return s === (setorSelecionado || '').trim().toLowerCase();
+        });
 
     if (filtradas.length > 0) {
       return filtradas.map(c => {
         const nomeCelula = String(c.Celula || c.nome || c.Célula || 'Célula').trim();
+        const setorCelula = String(c.Setor || c.setor || (isTodosSetores ? 'Sem Setor' : setorSelecionado)).trim();
 
         // Onde mostra o nome do líder, tem uma coluna ID_Lider (ou LiderCelula / Id_Lider):
         // busca o ID conferindo na tabela/lista BD_Membros e traz apenas o nome do líder
@@ -206,55 +211,74 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
         }
 
         return {
-          id: c.ID || c.Id || c.id || nomeCelula,
+          id: c.ID || c.Id || c.id || `${setorCelula}-${nomeCelula}`,
           nome: nomeCelula,
           lider: nomeLider,
-          setor: c.Setor || c.setor || setorSelecionado
+          setor: setorCelula
         };
-      }).sort((a, b) => a.nome.localeCompare(b.nome));
+      }).sort((a, b) => {
+        if (isTodosSetores) {
+          const cmpSetor = a.setor.localeCompare(b.setor);
+          if (cmpSetor !== 0) return cmpSetor;
+        }
+        return a.nome.localeCompare(b.nome);
+      });
     }
 
-    // Fallback: se BD_celulas ainda não estiver carregado, busca dos relatórios daquele setor
-    const lancsDoSetor = lancamentos.filter(
-      l => (l.Setor || l.setor || '').trim().toLowerCase() === setorSelecionado.trim().toLowerCase()
-    );
-    const nomesCelulasUnicas = Array.from(
-      new Set(lancsDoSetor.map(l => l.Célula || l.celulaNome).filter(Boolean))
-    ).sort();
+    // Fallback: se BD_celulas ainda não estiver carregado, busca dos relatórios daquele setor ou de todos
+    const lancsDoSetor = isTodosSetores
+      ? lancamentos
+      : lancamentos.filter(
+          l => (l.Setor || l.setor || '').trim().toLowerCase() === (setorSelecionado || '').trim().toLowerCase()
+        );
 
-    return nomesCelulasUnicas.map(nome => {
-      const itemExemplo = lancsDoSetor.find(l => (l.Célula || l.celulaNome) === nome);
-      return {
-        id: itemExemplo?.id || nome,
-        nome,
-        lider: itemExemplo?.LíderCelula || '-',
-        setor: setorSelecionado
-      };
+    const celulasMap = new Map<string, { id: any; nome: string; lider: string; setor: string }>();
+    lancsDoSetor.forEach(l => {
+      const nome = (l.Célula || l.celulaNome || '').trim();
+      const setor = (l.Setor || l.setor || (isTodosSetores ? 'Sem Setor' : setorSelecionado)).trim();
+      if (!nome) return;
+      const key = isTodosSetores ? `${setor}___${nome}` : nome;
+      if (!celulasMap.has(key)) {
+        celulasMap.set(key, {
+          id: l.id || key,
+          nome,
+          lider: l.LíderCelula || '-',
+          setor
+        });
+      }
     });
-  }, [celulasBD, setorSelecionado, membrosMap, lancamentos]);
+
+    return Array.from(celulasMap.values()).sort((a, b) => {
+      if (isTodosSetores) {
+        const cmpSetor = a.setor.localeCompare(b.setor);
+        if (cmpSetor !== 0) return cmpSetor;
+      }
+      return a.nome.localeCompare(b.nome);
+    });
+  }, [celulasBD, setorSelecionado, isTodosSetores, membrosMap, lancamentos]);
 
   // Segundo Bloco: Envelopes Validados e Envelopes Pendentes
   // Seguindo rigorosamente os filtros de Setor, Mês e Ano selecionados
   const resumoSKUs = useMemo(() => {
-    const lancsDoSetor = lancamentos.filter(l => {
-      const matchSetor = (l.Setor || l.setor || '').trim().toLowerCase() === setorSelecionado.trim().toLowerCase();
+    const lancsFiltrados = lancamentos.filter(l => {
+      const matchSetor = isTodosSetores || (l.Setor || l.setor || '').trim().toLowerCase() === (setorSelecionado || '').trim().toLowerCase();
       const matchAno = !anoSelecionado || l.ano === anoSelecionado || (l.dataBR && l.dataBR.endsWith(`/${anoSelecionado}`));
       const matchMes = mesSelecionado === 'todos' || l.mes === Number(mesSelecionado);
       return matchSetor && matchAno && matchMes;
     });
 
-    // Envelopes Validados = Qtd de Envelopes Validados daquele setor (TESOURARIA_RECEB === true)
-    const validados = lancsDoSetor.filter(l => l.TESOURARIA_RECEB === true);
+    // Envelopes Validados = Qtd de Envelopes Validados (TESOURARIA_RECEB === true)
+    const validados = lancsFiltrados.filter(l => l.TESOURARIA_RECEB === true);
 
     // Envelopes Pendentes = Qtd de Relatórios lançados no aplicativo que a tesouraria não recebeu/validou (TESOURARIA_RECEB !== true)
-    const pendentes = lancsDoSetor.filter(l => l.TESOURARIA_RECEB !== true);
+    const pendentes = lancsFiltrados.filter(l => l.TESOURARIA_RECEB !== true);
 
     return {
       qtdValidados: validados.length,
       qtdPendentes: pendentes.length,
-      totalLancados: lancsDoSetor.length
+      totalLancados: lancsFiltrados.length
     };
-  }, [lancamentos, setorSelecionado, anoSelecionado, mesSelecionado]);
+  }, [lancamentos, setorSelecionado, isTodosSetores, anoSelecionado, mesSelecionado]);
 
   // Semanas dinâmicas da tabela:
   // Regra do Usuário:
@@ -327,8 +351,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
     return listaSemanas;
   }, [anoSelecionado, mesSelecionado]);
 
-  // Identificação e contagem de Relatórios Duplicados para as semanas exibidas naquele mês, ano e setor selecionado:
-  // Exemplo da solicitação: Mês Agosto, Setor Safira -> Célula Efratá tem 2 relatórios duplicados (semana 32 e 34)
+  // Identificação e contagem de Relatórios Duplicados para as semanas exibidas naquele mês, ano e setor selecionado (ou todos os setores):
   const duplicadosInfo = useMemo(() => {
     const mesNumFiltro = (mesSelecionado && mesSelecionado !== 'todos') ? Number(mesSelecionado) : null;
     const anoNumFiltro = anoSelecionado ? Number(anoSelecionado) : 2026;
@@ -336,10 +359,10 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
     // Números das semanas exibidas na tela do mês atual
     const numerosSemanasTela = new Set(semanas.map(s => s.num));
 
-    // 1. Filtrar lançamentos que pertencem estritamente ao setor, ano e ao mês selecionado
-    const lancsDoSetorEMes = lancamentos.filter(l => {
+    // 1. Filtrar lançamentos que pertencem ao setor (ou todos), ano e ao mês selecionado
+    const lancsFiltrados = lancamentos.filter(l => {
       // Setor
-      const matchSetor = (l.Setor || l.setor || '').trim().toLowerCase() === setorSelecionado.trim().toLowerCase();
+      const matchSetor = isTodosSetores || (l.Setor || l.setor || '').trim().toLowerCase() === (setorSelecionado || '').trim().toLowerCase();
       if (!matchSetor) return false;
 
       // Ano
@@ -367,6 +390,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
       semanaNum: number;
       semanaData: string;
       celulaNome: string;
+      setorNome: string;
       relatorios: LancamentoTesouraria[];
       qtdDuplicados: number; // relatorios.length - 1
     }
@@ -376,10 +400,11 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
 
     // Agrupar lançamentos para cada par (Semana, Célula)
     semanas.forEach(semInfo => {
-      const relsPorCelula: Record<string, LancamentoTesouraria[]> = {};
+      const relsPorCelula: Record<string, { celNome: string; setorNome: string; rels: LancamentoTesouraria[] }> = {};
 
-      lancsDoSetorEMes.forEach(l => {
+      lancsFiltrados.forEach(l => {
         const celNome = (l.Célula || l.celulaNome || '').trim();
+        const setorNome = (l.Setor || l.setor || 'Sem Setor').trim();
         if (!celNome) return;
 
         // Determina o número da semana do relatório
@@ -395,13 +420,11 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
         }
 
         // Verifica correspondência com a semana atual da tela:
-        // 1. Número exato da semana (NumSemana / semanaNumero)
         let pertenceASemana = false;
         if (semNumLanc !== null && semNumLanc === semInfo.num) {
           pertenceASemana = true;
         }
 
-        // 2. Data exata coincidente
         if (!pertenceASemana) {
           if (l.dataBR === semInfo.data || l.data === semInfo.dataIso || l.DataCelula === semInfo.dataIso) {
             pertenceASemana = true;
@@ -409,28 +432,28 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
         }
 
         if (pertenceASemana) {
-          const chaveNorm = celNome.toLowerCase();
+          const chaveNorm = `${setorNome.toLowerCase()}___${celNome.toLowerCase()}`;
           if (!relsPorCelula[chaveNorm]) {
-            relsPorCelula[chaveNorm] = [];
+            relsPorCelula[chaveNorm] = { celNome, setorNome, rels: [] };
           }
-          relsPorCelula[chaveNorm].push(l);
+          relsPorCelula[chaveNorm].rels.push(l);
         }
       });
 
       // Identifica células que possuem mais de 1 relatório lançado na mesma semana
-      Object.entries(relsPorCelula).forEach(([, rels]) => {
-        if (rels.length > 1) {
-          const celNomePrincipal = rels[0].Célula || rels[0].celulaNome || 'Célula';
+      Object.entries(relsPorCelula).forEach(([, entry]) => {
+        if (entry.rels.length > 1) {
           grupos.push({
-            chave: `${semInfo.num}-${celNomePrincipal}`,
+            chave: `${semInfo.num}-${entry.setorNome}-${entry.celNome}`,
             semanaNum: semInfo.num,
             semanaData: semInfo.data,
-            celulaNome: celNomePrincipal,
-            relatorios: rels,
-            qtdDuplicados: rels.length - 1
+            celulaNome: entry.celNome,
+            setorNome: entry.setorNome,
+            relatorios: entry.rels,
+            qtdDuplicados: entry.rels.length - 1
           });
           // Soma a quantidade de relatórios excedentes duplicados
-          totalRelatoriosDuplicados += (rels.length - 1);
+          totalRelatoriosDuplicados += (entry.rels.length - 1);
         }
       });
     });
@@ -439,7 +462,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
       totalDuplicados: totalRelatoriosDuplicados,
       grupos
     };
-  }, [lancamentos, setorSelecionado, anoSelecionado, mesSelecionado, semanas]);
+  }, [lancamentos, setorSelecionado, isTodosSetores, anoSelecionado, mesSelecionado, semanas]);
 
   const formatBRL = (val: number) => {
     return new Intl.NumberFormat('pt-BR', {
@@ -450,10 +473,17 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
 
   // Helper para buscar lançamento da célula na semana e verificar TESOURARIA_RECEB
   // Verifica por número da semana, data exata ou proximidade do sábado (mesma semana)
-  const getValores = (celulaNome: string, semInfo: { num: number; data: string; dataIso: string; dataObj: Date }) => {
+  const getValores = (celulaNome: string, celulaSetor: string, semInfo: { num: number; data: string; dataIso: string; dataObj: Date }) => {
     const lanc = lancamentos.find(l => {
       const matchNome = (l.Célula || l.celulaNome || '').trim().toLowerCase() === celulaNome.trim().toLowerCase();
       if (!matchNome) return false;
+
+      if (isTodosSetores && celulaSetor && celulaSetor !== 'Sem Setor') {
+        const lancSetor = (l.Setor || l.setor || '').trim().toLowerCase();
+        if (lancSetor && lancSetor !== celulaSetor.trim().toLowerCase()) {
+          return false;
+        }
+      }
 
       // 1. Confere por data exata (DD/MM/YYYY ou YYYY-MM-DD)
       if (l.dataBR === semInfo.data || l.data === semInfo.dataIso || l.DataCelula === semInfo.dataIso) {
@@ -522,7 +552,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 {resumoSKUs.qtdValidados}
               </span>
               <span className="text-xs font-medium text-slate-400">
-                de {resumoSKUs.totalLancados} relatórios do setor
+                de {resumoSKUs.totalLancados} relatórios {isTodosSetores ? 'de todos os setores' : 'do setor'}
               </span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5 break-words">
@@ -640,7 +670,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
               {celulasDoSetor.length === 0 ? (
                 <tr>
                   <td colSpan={2 + semanas.length} className="py-12 text-center text-slate-600 font-medium">
-                    Nenhuma célula cadastrada encontrada na tabela <span className="font-semibold text-slate-800">BD_celulas</span> para o setor <strong className="text-slate-900">{setorSelecionado}</strong>.
+                    Nenhuma célula cadastrada encontrada na tabela <span className="font-semibold text-slate-800">BD_celulas</span> {isTodosSetores ? 'para os setores cadastrados' : <>para o setor <strong className="text-slate-900">{setorSelecionado}</strong></>}.
                   </td>
                 </tr>
               ) : (
@@ -650,7 +680,14 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                       {/* Linha 1: PIX */}
                       <tr className="border-t-2 border-[#b0b8cc]">
                         <td rowSpan={2} className="py-2.5 px-3.5 font-bold text-xs text-slate-900 align-middle bg-[#f3f5f9] border-r border-[#b0b8cc]">
-                          <p className="font-bold text-slate-900 text-[13px] leading-tight truncate max-w-[220px]">{celula.nome}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-bold text-slate-900 text-[13px] leading-tight truncate max-w-[200px]">{celula.nome}</p>
+                            {isTodosSetores && celula.setor && (
+                              <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-[#1c2030] text-slate-200 border border-[#303752]">
+                                {celula.setor}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[11px] text-slate-600 font-medium leading-tight mt-1 truncate max-w-[220px]">
                             Líder: <span className="text-slate-800 font-semibold">{celula.lider || '-'}</span>
                           </p>
@@ -661,7 +698,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                         </td>
 
                         {semanas.map((sem, sIdx) => {
-                          const vals = getValores(celula.nome, sem);
+                          const vals = getValores(celula.nome, celula.setor, sem);
                           const hasRelatorio = vals.temDado;
                           const isValidado = vals.validadoTesouraria;
                           const valorPix = vals.pix ?? 0;
@@ -685,7 +722,6 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                                   )}
                                 </div>
                               ) : (
-                                // Não lançado relatório naquela semana: fica apenas o fundo no tom de vermelho claro
                                 <span className="text-rose-400/70 text-[11px] font-mono select-none">-</span>
                               )}
                             </td>
@@ -700,7 +736,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                         </td>
 
                         {semanas.map((sem, sIdx) => {
-                          const vals = getValores(celula.nome, sem);
+                          const vals = getValores(celula.nome, celula.setor, sem);
                           const hasRelatorio = vals.temDado;
                           const isValidado = vals.validadoTesouraria;
                           const valorEspecie = vals.dinheiro ?? 0;
@@ -724,7 +760,6 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                                   )}
                                 </div>
                               ) : (
-                                // Não lançado relatório naquela semana: fica apenas o fundo no tom de vermelho claro
                                 <span className="text-rose-400/70 text-[11px] font-mono select-none">-</span>
                               )}
                             </td>
@@ -759,7 +794,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                    Relatórios Duplicados no Setor {setorSelecionado}
+                    Relatórios Duplicados {isTodosSetores ? 'em Todos os Setores' : `no Setor ${setorSelecionado}`}
                   </h3>
                   <p className="text-xs text-slate-400 mt-0.5">
                     {duplicadosInfo.totalDuplicados} {duplicadosInfo.totalDuplicados === 1 ? 'relatório excedente' : 'relatórios excedentes'} em {duplicadosInfo.grupos.length} {duplicadosInfo.grupos.length === 1 ? 'célula/semana' : 'células/semanas'}
@@ -769,7 +804,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
               <button
                 id="btn-fechar-modal-duplicados"
                 onClick={() => setModalDuplicadosAberto(false)}
-                className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors"
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors cursor-pointer"
                 title="Fechar"
               >
                 <X className="w-5 h-5" />
@@ -785,7 +820,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                 </div>
                 <button
                   onClick={() => setMsgExclusaoSucesso(null)}
-                  className="text-slate-400 hover:text-white text-xs p-1"
+                  className="text-slate-400 hover:text-white text-xs p-1 cursor-pointer"
                 >
                   ✕
                 </button>
@@ -814,7 +849,7 @@ export const RelacaoEnvelopesView: React.FC<RelacaoEnvelopesViewProps> = ({
                           </span>
                         </div>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          Setor: <strong className="text-slate-200">{setorSelecionado}</strong>
+                          Setor: <strong className="text-slate-200">{grupo.setorNome || setorSelecionado}</strong>
                         </p>
                       </div>
 

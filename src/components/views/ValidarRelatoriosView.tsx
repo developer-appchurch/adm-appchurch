@@ -18,8 +18,8 @@ import { SharePointService } from '../../services/sharepointService';
 
 interface ValidarRelatoriosViewProps {
   lancamentos: LancamentoTesouraria[];
-  anoSelecionado: number;
-  onSelectAno?: (ano: number) => void;
+  anoSelecionado: number | string;
+  onSelectAno?: (ano: number | string) => void;
   usuarioLogado?: MembroItem | null;
   onAtualizarLancamento?: (id: string, dados: Partial<LancamentoTesouraria>) => void;
   onConfirmarLancamento?: (id: string, idTesoureiro?: string | number, dataTesouraria?: string) => void;
@@ -177,11 +177,47 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
     return 0;
   };
 
+  const isTodosAnos = String(anoSelecionado).toLowerCase() === 'todos' || String(anoSelecionado).toLowerCase() === 'todos os anos' || Number(anoSelecionado) === 0;
+
+  // Anos disponíveis extraídos dos lançamentos no banco de dados
+  const anosDisponiveis = useMemo(() => {
+    const anosSet = new Set<number>();
+    const anoAtualReal = new Date().getFullYear();
+    anosSet.add(anoAtualReal);
+
+    lancamentos.forEach(l => {
+      if (l.ano && typeof l.ano === 'number' && l.ano > 2000) {
+        anosSet.add(l.ano);
+      } else if (l.dataBR && l.dataBR.includes('/')) {
+        const parts = l.dataBR.split('/');
+        const a = parseInt(parts[2], 10);
+        if (a && a > 2000) anosSet.add(a);
+      } else if (l.data && l.data.includes('-')) {
+        const a = parseInt(l.data.split('-')[0], 10);
+        if (a && a > 2000) anosSet.add(a);
+      }
+    });
+
+    return Array.from(anosSet).sort((a, b) => b - a);
+  }, [lancamentos]);
+
+  // Meses disponíveis para o filtro de acordo com o ano selecionado
+  const mesesOpcoesValidas = useMemo(() => {
+    const hoje = new Date();
+    if (!isTodosAnos && Number(anoSelecionado) === hoje.getFullYear()) {
+      const mesLimite = hoje.getMonth() + 1;
+      return MESES_OPCOES.filter(m => m.valor === 'todos' || parseInt(m.valor, 10) <= mesLimite);
+    }
+    return MESES_OPCOES;
+  }, [isTodosAnos, anoSelecionado]);
+
   // 1. Filtragem por Ano e Mês Selecionados
   const lancamentosDoAno = useMemo(() => {
     return lancamentos.filter(item => {
-      const anoItem = extrairAnoLancamento(item);
-      if (anoItem !== anoSelecionado) return false;
+      if (!isTodosAnos) {
+        const anoItem = extrairAnoLancamento(item);
+        if (anoItem !== Number(anoSelecionado)) return false;
+      }
 
       // Se mês específico selecionado (diferente de 'todos'), filtra pelo mês
       if (mesFiltro !== 'todos') {
@@ -191,7 +227,7 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
 
       return true;
     });
-  }, [lancamentos, anoSelecionado, mesFiltro]);
+  }, [lancamentos, isTodosAnos, anoSelecionado, mesFiltro]);
 
   // Lista unificada de todos os setores distintos
   const listaSetores = useMemo(() => {
@@ -498,14 +534,16 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
             </label>
             <select
               id="select-ano-validar"
-              value={anoSelecionado}
-              onChange={(e) => onSelectAno && onSelectAno(Number(e.target.value))}
+              value={isTodosAnos ? 'todos' : anoSelecionado}
+              onChange={(e) => onSelectAno && onSelectAno(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}
               className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
             >
-              <option value={2026} className="bg-[#1c2030] text-white">2026</option>
-              <option value={2025} className="bg-[#1c2030] text-white">2025</option>
-              <option value={2024} className="bg-[#1c2030] text-white">2024</option>
-              <option value={2023} className="bg-[#1c2030] text-white">2023</option>
+              <option value="todos" className="bg-[#1c2030] text-white">Todos os Anos</option>
+              {anosDisponiveis.map(ano => (
+                <option key={ano} value={ano} className="bg-[#1c2030] text-white">
+                  {ano}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -523,7 +561,7 @@ export const ValidarRelatoriosView: React.FC<ValidarRelatoriosViewProps> = ({
               }}
               className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
             >
-              {MESES_OPCOES.map(m => (
+              {mesesOpcoesValidas.map(m => (
                 <option 
                   key={m.valor} 
                   value={m.valor} 
